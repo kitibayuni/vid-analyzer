@@ -1,0 +1,3 @@
+## ignoring these larger binaries for now
+ffmpeg.exe
+ffprobe.exe
