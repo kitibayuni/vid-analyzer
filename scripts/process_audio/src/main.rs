@@ -30,4 +30,17 @@ fn main() -> Result<(), Box<dyn std:error::Error>> {
     let samplerate = flac.streaminfo().sample_rate as usize;
 
     // --- INITIATE PYIN --- //
+    let frame_min = 60.0
+    let frame_max = 600.0
+    let frame_len = (0.025 * samplerate as f64) as usize;
+    
+    // tuple for 
+    let (window_len, hop_len, resolution) = (None, None, None);
+    
+    // pyin executor
+    let mut pyin_executor = = PYINExecutor::new(frame_min, frame_max, samplerate as i32, frame_len, window_len, hop_len, resolution);
+
+    let framing = Framing::Center(PadMode::Constant(0,0));
+
+
 }
