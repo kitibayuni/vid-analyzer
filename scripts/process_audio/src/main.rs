@@ -1,133 +1,132 @@
 use std::env;
 use std::fs::File;
 use std::io::BufReader;
+use std::time::Instant;
 
 use claxon::FlacReader;
-use pyin::{PYINExecutor, Framing, PadMode};
 use csv::Writer;
+use pyin::{Framing, PadMode, PYINExecutor};
+use rayon::prelude::*; // notes: for parallel iteration
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- CLI ARGUMENT HANDLING --- //
+    // notes: get command line args, expect exactly 1 input file path
     let args: Vec<String> = env::args().collect();
-
-    // checking # of args
     if args.len() != 2 {
         eprintln!("Usage: {} <input_audio.flac>", args[0]);
         std::process::exit(1);
     }
-
     let input_path = &args[1];
     println!("🔍 Input FLAC file: {}", input_path);
 
-    // --- PROCESS .FLAC --- //
+    // --- OPEN FLAC --- //
+    // notes: open file, wrap in BufReader, initialize FLAC decoder
     let file = File::open(input_path)?;
     let reader = BufReader::new(file);
     let mut flac = FlacReader::new(reader)?;
 
-    // take the flac's stream info's sample rate
+    // notes: get sample rate info from flac metadata
     let samplerate = flac.streaminfo().sample_rate as usize;
     println!("🎵 Sample rate: {} Hz", samplerate);
 
-    // --- INITIATE PYIN --- //
+    // --- PYIN PARAMS SETUP (used inside closure later) --- //
     let frame_min = 60.0;
     let frame_max = 600.0;
     let frame_len = (0.025 * samplerate as f64) as usize;
-    println!("🧠 PYIN initialized with frame length: {} samples", frame_len);
+    println!("🧠 PYIN frame length: {} samples", frame_len);
 
     let (window_len, hop_len, resolution) = (None, None, None);
 
-    let mut pyin_executor = PYINExecutor::new(
-        frame_min,
-        frame_max,
-        samplerate as u32,
-        frame_len,
-        window_len,
-        hop_len,
-        resolution,
-    );
-
-    // predefine framing behavior
-    let framing = Framing::Center(PadMode::Constant(0.0));
-
-    // --- CHUNKING --- //
+    // --- CHUNKING SETUP --- //
     let chunk_sec = 0.5;
     let chunk_samples = (chunk_sec * samplerate as f64) as usize;
     let overlap_samples = frame_len;
-
     println!(
-        "📦 Chunking enabled: {}s chunks ({} samples), with {} sample overlap",
+        "📦 Chunking: {:.1}s chunks ({} samples), {} sample overlap",
         chunk_sec, chunk_samples, overlap_samples
     );
 
-    let mut buffer: Vec<f64> = Vec::with_capacity(chunk_samples + overlap_samples);
-    let mut chunk_start_time = 0.0;
+    // --- LOAD SAMPLES INTO MEMORY --- //
+    let samples: Vec<f64> = flac
+        .samples()
+        .map(|s| s.unwrap() as f64 / i16::MAX as f64)
+        .collect();
+    println!("📊 Total samples loaded: {}", samples.len());
 
-    // --- CSV WRITER --- //
+    // --- SPLIT INTO OVERLAPPING CHUNKS --- //
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < samples.len() {
+        let end = (start + chunk_samples + overlap_samples).min(samples.len());
+        chunks.push((&samples[start..end], start));
+        start += chunk_samples;
+    }
+    println!("🧩 Total chunks: {}", chunks.len());
+
+    // --- INIT CSV WRITER --- //
     let mut writer = Writer::from_path("pitch_output.csv")?;
     writer.write_record(&["time_sec", "pitch_hz"])?;
-    println!("📄 Writing pitch data to pitch_output.csv");
 
-    // --- WRITE ITERATION OVER CHUNKS --- //
-    let mut sample_iter = flac.samples();
-    let mut sample_counter = 0;
-    let mut chunk_count = 0;
+    // --- PROCESS CHUNKS IN PARALLEL --- //
+    let results: Vec<Vec<(f64, Option<f64>)>> = chunks
+        .par_iter()
+        .enumerate()
+        .map(|(i, (chunk, start_sample))| {
+            println!("⏳ Chunk #{} ({} samples)", i + 1, chunk.len());
+            let timer = Instant::now();
 
-    while let Some(sample) = sample_iter.next() {
-        let s = sample.unwrap() as f64 / i16::MAX as f64; // normalize
-        buffer.push(s);
-        sample_counter += 1;
+            // --- create new PYIN executor per thread (can't share mutable) --- //
+            let mut pyin_executor = PYINExecutor::new(
+                frame_min,
+                frame_max,
+                samplerate as u32,
+                frame_len,
+                window_len,
+                hop_len,
+                resolution,
+            );
 
-        if buffer.len() >= chunk_samples + overlap_samples {
-            println!("🧩 Processing chunk #{} ({} samples)", chunk_count + 1, buffer.len());
-
+            // --- recreate framing inside closure (no move) --- //
             let framing = Framing::Center(PadMode::Constant(0.0));
-            let (timestamps, f0, _, _) = pyin_executor.pyin(&buffer, f64::NAN, framing);
 
-            println!("   ➕ PYIN returned {} pitch estimates", f0.len());
+            // --- pitch estimation --- //
+            let (timestamps, f0, _, _) = pyin_executor.pyin(chunk, f64::NAN, framing);
 
-            for (t, pitch) in timestamps.iter().zip(f0.iter()) {
-                let global_time = t + chunk_start_time;
-                writer.write_record(&[
-                    format!("{:.4}", global_time),
-                    if pitch.is_nan() {
-                        "".to_string()
-                    } else {
-                        format!("{:.2}", pitch)
-                    },
-                ])?;
-            }
+            // --- attach global time offset --- //
+            let global_results: Vec<(f64, Option<f64>)> = timestamps
+                .iter()
+                .zip(f0.iter())
+                .map(|(&t, &pitch)| {
+                    let global_time = t + (*start_sample as f64) / samplerate as f64;
+                    let pitch_opt = if pitch.is_nan() { None } else { Some(pitch) };
+                    (global_time, pitch_opt)
+                })
+                .collect();
 
-            let overlap: Vec<f64> = buffer[buffer.len() - overlap_samples..].to_vec();
-            buffer.clear();
-            buffer.extend(overlap);
-            chunk_start_time += chunk_sec;
-            chunk_count += 1;
-        }
-    }
+            println!(
+                "   ✅ Returned {} pitch points in {:.2?}",
+                global_results.len(),
+                timer.elapsed()
+            );
 
-    // --- PROCESS FINAL CHUNK IF LEFTOVER --- //
-    if !buffer.is_empty() {
-        println!("🧩 Final chunk: {} samples", buffer.len());
-        let (timestamps, f0, _, _) = pyin_executor.pyin(&buffer, f64::NAN, framing);
+            global_results
+        })
+        .collect();
 
-        println!("   ➕ PYIN returned {} pitch estimates", f0.len());
-
-        for (t, pitch) in timestamps.iter().zip(f0.iter()) {
-            let global_time = t + chunk_start_time;
+    // --- WRITE TO CSV --- //
+    println!("💾 Writing pitch_output.csv ...");
+    for chunk_result in results {
+        for (time_sec, pitch_opt) in chunk_result {
             writer.write_record(&[
-                format!("{:.4}", global_time),
-                if pitch.is_nan() {
-                    "".to_string()
-                } else {
-                    format!("{:.2}", pitch)
-                },
+                format!("{:.4}", time_sec),
+                pitch_opt
+                    .map(|p| format!("{:.2}", p))
+                    .unwrap_or_else(|| "".to_string()),
             ])?;
         }
     }
-
     writer.flush()?;
+    println!("✅ Done. Output saved.");
 
-    println!("✅ Done! {} total samples processed", sample_counter);
-    println!("📈 Output saved to pitch_output.csv");
     Ok(())
 }
