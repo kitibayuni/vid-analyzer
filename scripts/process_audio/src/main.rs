@@ -6,11 +6,11 @@ use std::time::Instant;
 use claxon::FlacReader;
 use csv::Writer;
 use pyin::{Framing, PadMode, PYINExecutor};
-use rayon::prelude::*; // notes: for parallel iteration
+use rayon::prelude::*;
+use indicatif::{ProgressBar, ProgressStyle};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- CLI ARGUMENT HANDLING --- //
-    // notes: get command line args, expect exactly 1 input file path
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} <input_audio.flac>", args[0]);
@@ -20,16 +20,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔍 Input FLAC file: {}", input_path);
 
     // --- OPEN FLAC --- //
-    // notes: open file, wrap in BufReader, initialize FLAC decoder
     let file = File::open(input_path)?;
     let reader = BufReader::new(file);
     let mut flac = FlacReader::new(reader)?;
 
-    // notes: get sample rate info from flac metadata
     let samplerate = flac.streaminfo().sample_rate as usize;
     println!("🎵 Sample rate: {} Hz", samplerate);
 
-    // --- PYIN PARAMS SETUP (used inside closure later) --- //
+    // --- PYIN PARAMS SETUP --- //
     let frame_min = 60.0;
     let frame_max = 600.0;
     let frame_len = (0.025 * samplerate as f64) as usize;
@@ -38,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (window_len, hop_len, resolution) = (None, None, None);
 
     // --- CHUNKING SETUP --- //
-    let chunk_sec = 2.0;
+    let chunk_sec = 5.0; // adjusted for fewer, larger chunks
     let chunk_samples = (chunk_sec * samplerate as f64) as usize;
     let overlap_samples = frame_len;
     println!(
@@ -67,15 +65,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = Writer::from_path("pitch_output.csv")?;
     writer.write_record(&["time_sec", "pitch_hz"])?;
 
+    // --- PROGRESS BAR --- //
+    let pb = ProgressBar::new(chunks.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} chunks ({eta})")
+            .unwrap()
+            .progress_chars("█  "),
+    );
+
     // --- PROCESS CHUNKS IN PARALLEL --- //
     let results: Vec<Vec<(f64, Option<f64>)>> = chunks
         .par_iter()
         .enumerate()
-        .map(|(i, (chunk, start_sample))| {
-            println!("⏳ Chunk #{} ({} samples)", i + 1, chunk.len());
-            let timer = Instant::now();
-
-            // --- create new PYIN executor per thread (can't share mutable) --- //
+        .map(|(_i, (chunk, start_sample))| {
             let mut pyin_executor = PYINExecutor::new(
                 frame_min,
                 frame_max,
@@ -86,13 +89,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 resolution,
             );
 
-            // --- recreate framing inside closure (no move) --- //
             let framing = Framing::Center(PadMode::Constant(0.0));
 
-            // --- pitch estimation --- //
             let (timestamps, f0, _, _) = pyin_executor.pyin(chunk, f64::NAN, framing);
 
-            // --- attach global time offset --- //
             let global_results: Vec<(f64, Option<f64>)> = timestamps
                 .iter()
                 .zip(f0.iter())
@@ -103,15 +103,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect();
 
-            println!(
-                "   ✅ Returned {} pitch points in {:.2?}",
-                global_results.len(),
-                timer.elapsed()
-            );
-
+            pb.inc(1); // update progress bar after each chunk
             global_results
         })
         .collect();
+
+    pb.finish_with_message("✅ Processing complete");
 
     // --- WRITE TO CSV --- //
     println!("💾 Writing pitch_output.csv ...");
