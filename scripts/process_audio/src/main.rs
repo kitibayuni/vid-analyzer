@@ -45,7 +45,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         chunk_sec, chunk_samples, overlap_samples
     );
 
+    // --- MULTIPROGRESS ---
+    let m = MultiProgress::new();
+
+    // Global status bar at the top
+    let status_bar = m.add(ProgressBar::new(1));
+    status_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{msg}")
+            .unwrap(),
+    );
+
+    // Overall channel progress bar
+    let channel_bar = m.add(ProgressBar::new(channels as u64));
+    channel_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("Channels [{elapsed_precise}] [{wide_bar}] {pos}/{len} ({eta})")
+            .unwrap()
+            .progress_chars("█  "),
+    );
+
     // --- LOAD SAMPLES INTO CHANNEL BUFFERS ---
+    status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
     let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
     for (i, sample) in flac.samples().enumerate() {
         let s = sample?;
@@ -61,23 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     writer.write_record(&headers)?;
 
-    // --- MULTIPROGRESS ---
-    let m = MultiProgress::new();
-
-    // Overall channel progress bar
-    let channel_bar = m.add(ProgressBar::new(channel_buffers.len() as u64));
-    channel_bar.set_style(
-        ProgressStyle::default_bar()
-            .template("Channels [{elapsed_precise}] [{wide_bar}] {pos}/{len} ({eta})")
-            .unwrap()
-            .progress_chars("█  "),
-    );
-
     let mut channel_results: Vec<Vec<(f64, Option<f64>)>> = Vec::new();
 
     // --- PROCESS EACH CHANNEL ---
     for (chan_idx, samples) in channel_buffers.iter().enumerate() {
-        // Skip silent channels
         let has_audio = samples.iter().any(|&v| v.abs() > 1e-6);
         if !has_audio {
             println!("Channel {} has no data, skipping.", chan_idx + 1);
@@ -86,50 +94,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // --- PREPROCESS BAR ---
-        let total_chunks = (samples.len() + chunk_samples - 1) / chunk_samples;
-        let total_preprocess_steps = samples.len() + total_chunks; // normalize + slicing
-        let preprocess_bar = m.add(ProgressBar::new(total_preprocess_steps as u64));
-        preprocess_bar.set_style(
-            ProgressStyle::default_bar()
-                .template(&format!(
-                    "Channel {} Pre-process [{{elapsed_precise}}] [{{wide_bar}}] {{pos}}/{{len}}",
-                    chan_idx + 1
-                ))
-                .unwrap()
-                .progress_chars("█  "),
-        );
+    // --- PREPROCESS BAR ---
+    status_bar.set_message(format!("[ == PRE-PROCESSING CHANNEL {} == ]", chan_idx + 1));
+    let total_chunks = (samples.len() + chunk_samples - 1) / chunk_samples;
+    let total_preprocess_steps = samples.len() + total_chunks; // normalization + chunk indexing
+    let preprocess_bar = m.add(ProgressBar::new(total_preprocess_steps as u64));
+    preprocess_bar.set_style(
+        ProgressStyle::default_bar()
+            .template(&format!(
+                "[{{elapsed_precise}}] Ch.{} Pre-process  [{{wide_bar}}] {{pos}}/{{len}}",
+                chan_idx + 1
+            ))
+            .unwrap()
+            .progress_chars("|  "),
+    );
 
-        // Step 1: normalize (or touch) each sample
-        let mut normalized_samples: Vec<f64> = Vec::with_capacity(samples.len());
-        for &s in samples.iter() {
-            normalized_samples.push(s);
-            preprocess_bar.inc(1);
-        }
+    // Step 1: normalize / touch memory
+    let mut normalized_samples: Vec<f64> = Vec::with_capacity(samples.len());
+    for &s in samples.iter() {
+        normalized_samples.push(s);
+        preprocess_bar.inc(1); // counts toward the preprocess progress
+    }
 
-        // Step 2: generate chunk indices and touch memory
-        let mut chunk_indices = Vec::new();
-        let mut start = 0;
-        while start < normalized_samples.len() {
-            let end = (start + chunk_samples + overlap_samples).min(normalized_samples.len());
-            let _chunk_slice: Vec<f64> = normalized_samples[start..end].to_vec(); // reflect real work
-            chunk_indices.push((start, end));
-            preprocess_bar.inc(1);
-            start += chunk_samples;
-        }
+    // Step 2: generate chunk indices
+    status_bar.set_message("[ == COPYING MEMORY & PREPARING SLICES == ]");
+    let mut chunk_indices = Vec::new();
+    let mut start = 0;
+    while start < normalized_samples.len() {
+        let end = (start + chunk_samples + overlap_samples).min(normalized_samples.len());
+        // Don't allocate a new vector here; just store indices
+        chunk_indices.push((start, end));
+        preprocess_bar.inc(1); // each chunk counted toward progress
+        start += chunk_samples;
+    }
 
-        preprocess_bar.finish_with_message(format!("Channel {} pre-processed", chan_idx + 1));
+    preprocess_bar.finish_with_message(format!("Channel {} pre-processed", chan_idx + 1));
 
         // --- CHUNK PROCESS BAR ---
+        status_bar.set_message(format!("[ == PROCESSING CHUNKS W/ PYIN CHANNEL {} == ]", chan_idx + 1));
         let chunk_bar = m.add(ProgressBar::new(chunk_indices.len() as u64));
         chunk_bar.set_style(
             ProgressStyle::default_bar()
                 .template(&format!(
-                    "Channel {} Chunks [{{elapsed_precise}}] [{{wide_bar}}] {{pos}}/{{len}} ({{eta}})",
+                    "[{{elapsed_precise}}] Ch.{} Chunks [{{wide_bar}}] {{pos}}/{{len}} ({{eta}})",
                     chan_idx + 1
                 ))
                 .unwrap()
-                .progress_chars("█  "),
+                .progress_chars("|  "),
         );
 
         // Process chunks in parallel
@@ -172,6 +183,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     channel_bar.finish_with_message("All channels complete");
+    status_bar.set_message("[ == ALL CHANNELS COMPLETE == ]");
+    status_bar.finish();
 
     // --- WRITE CSV ---
     let max_len = channel_results.iter().map(|v| v.len()).max().unwrap_or(0);
