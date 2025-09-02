@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (window_len, hop_len, resolution) = (None, None, None);
 
     // --- CHUNKING SETUP --- //
-    let chunk_sec = 0.5;
+    let chunk_sec = 2.0;
     let chunk_samples = (chunk_sec * samplerate as f64) as usize;
     let overlap_samples = frame_len;
     println!(
