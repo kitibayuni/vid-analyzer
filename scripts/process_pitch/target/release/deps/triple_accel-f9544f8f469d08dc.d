@@ -1,0 +1,10 @@
+C:\Users\Administrator\Code\vid-analyzer\scripts\process_audio\target\release\deps\triple_accel-f9544f8f469d08dc.d: C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\lib.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\jewel.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\hamming.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\levenshtein.rs
+
+C:\Users\Administrator\Code\vid-analyzer\scripts\process_audio\target\release\deps\libtriple_accel-f9544f8f469d08dc.rlib: C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\lib.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\jewel.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\hamming.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\levenshtein.rs
+
+C:\Users\Administrator\Code\vid-analyzer\scripts\process_audio\target\release\deps\libtriple_accel-f9544f8f469d08dc.rmeta: C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\lib.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\jewel.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\hamming.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\levenshtein.rs
+
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\lib.rs:
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\jewel.rs:
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\hamming.rs:
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\triple_accel-0.4.0\src\levenshtein.rs:

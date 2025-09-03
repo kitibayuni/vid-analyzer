@@ -1,0 +1,10 @@
+C:\Users\Administrator\Code\vid-analyzer\scripts\process_audio\target\release\deps\thiserror-0c06d58d58434e09.d: C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\lib.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\aserror.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\display.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\var.rs
+
+C:\Users\Administrator\Code\vid-analyzer\scripts\process_audio\target\release\deps\libthiserror-0c06d58d58434e09.rlib: C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\lib.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\aserror.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\display.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\var.rs
+
+C:\Users\Administrator\Code\vid-analyzer\scripts\process_audio\target\release\deps\libthiserror-0c06d58d58434e09.rmeta: C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\lib.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\aserror.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\display.rs C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\var.rs
+
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\lib.rs:
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\aserror.rs:
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\display.rs:
+C:\Users\Administrator\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.16\src\var.rs:

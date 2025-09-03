@@ -2,5 +2,6 @@
 ffmpeg.exe
 ffprobe.exe
 scripts/process_audio/target/*
+scripts/process_volume/target/*
 example.flac
 scripts/data_visualization/venv/*
