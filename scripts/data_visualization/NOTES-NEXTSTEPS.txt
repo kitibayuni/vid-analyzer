@@ -1,5 +1,6 @@
 Next steps:
-create transcript
+create transcript -> python process_transcript.py separated/htdemucs/example/vocals.wav --model medium --output something.csv
+
 create mutation of pitch process for:
 volume/audio energy
 speechbrain?? (emotion detection) maybe use pitch data to infer emotion
