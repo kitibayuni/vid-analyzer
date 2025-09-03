@@ -3,3 +3,4 @@ ffmpeg.exe
 ffprobe.exe
 scripts/process_audio/target/*
 example.flac
+scripts/data_visualization/venv/*
