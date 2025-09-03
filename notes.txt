@@ -1,3 +1,4 @@
 DEPENDENCIES:
 - ffmpeg.exe
 - ffprobe.exe
+- sudo apt install python3-dev build-essential

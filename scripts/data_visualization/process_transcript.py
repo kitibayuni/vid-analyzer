@@ -1,33 +1,44 @@
+import argparse
 import csv
-import math
+import stable_whisper
 
 def export_csv(transcript, output_file, interval=0.2):
     """
-    Export transcript into CSV with fixed intervals.
-    transcript: whisper output (list of segments with start, end, text)
-    output_file: path to save CSV
-    interval: step size in seconds (default 0.2s = 200ms)
+    Export transcript into CSV with fixed 0.2s intervals.
+    Each row = [time_sec, word], deduplicated.
     """
-    # Find total duration
-    total_duration = max(seg["end"] for seg in transcript["segments"])
+    words = []
+    for seg in transcript["segments"]:
+        if "words" in seg:
+            for w in seg["words"]:
+                words.append((w["start"], w["word"].strip()))
     
+    # Sort by time
+    words.sort(key=lambda x: x[0])
+
     with open(output_file, "w", newline="") as f:
         writer = csv.writer(f)
-        # CSV header
         writer.writerow(["time_sec", "word"])
         
-        t = 0.0
-        seg_idx = 0
-        while t <= total_duration:
-            word_at_time = ""
-            
-            # Find active segment
-            while seg_idx < len(transcript["segments"]) and transcript["segments"][seg_idx]["end"] < t:
-                seg_idx += 1
-            if seg_idx < len(transcript["segments"]):
-                seg = transcript["segments"][seg_idx]
-                if seg["start"] <= t <= seg["end"]:
-                    word_at_time = seg["text"].strip()
-            
-            writer.writerow([f"{t:.4f}", word_at_time])
-            t += interval
+        last_word = None
+        for start_time, word in words:
+            snapped_t = round(start_time / interval) * interval
+            if word and word != last_word:
+                writer.writerow([f"{snapped_t:.4f}", word])
+                last_word = word
+
+def main(input_file, output_file, model_size):
+    model = stable_whisper.load_model(model_size)
+    result = model.transcribe(input_file, word_timestamps=True)  # <-- key flag
+    export_csv(result.to_dict(), output_file)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Transcribe audio with Whisper + stable-ts and export word-level CSV (0.2s intervals).")
+    parser.add_argument("input_file", type=str, help="Path to the input audio file")
+    parser.add_argument("--output", type=str, default=None, help="Output CSV file (default: input name + '_words.csv')")
+    parser.add_argument("--model", type=str, default="small", help="Whisper model size (tiny, base, small, medium, large)")
+
+    args = parser.parse_args()
+    output_file = args.output or args.input_file.rsplit(".", 1)[0] + "_words.csv"
+
+    main(args.input_file, output_file, args.model)

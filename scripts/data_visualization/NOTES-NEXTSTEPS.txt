@@ -1,0 +1,7 @@
+Next steps:
+create transcript
+create mutation of pitch process for:
+volume/audio energy
+speechbrain?? (emotion detection) maybe use pitch data to infer emotion
+
+adjust process so that audio -> speech only, background only, normalized (for pitch??)
