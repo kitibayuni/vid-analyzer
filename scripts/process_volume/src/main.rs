@@ -9,12 +9,15 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- CLI ARGUMENTS ---
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <input_audio.flac>", args[0]);
+    if args.len() != 3 {
+        eprintln!("Usage: {} <input_audio.flac> <output.csv>", args[0]);
         std::process::exit(1);
     }
     let input_path = &args[1];
+    let output_path = &args[2];
+
     println!("Input FLAC file: {}", input_path);
+    println!("Output CSV file: {}", output_path);
 
     // --- OPEN FLAC ---
     let file = File::open(input_path)?;
@@ -47,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // --- CSV SETUP ---
-    let mut writer = Writer::from_path("volume_energy_output.csv")?;
+    let mut writer = Writer::from_path(output_path)?;
     let mut headers = vec!["time_sec".to_string()];
     for c in 0..channels {
         headers.push(format!("chan{}_rms", c + 1));
@@ -87,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     writer.flush()?;
     status_bar.finish_with_message("[ == RMS & ENERGY CSV COMPLETE == ]");
-    println!("Done. Output saved to volume_energy_output.csv");
+    println!("Done. Output saved to {}", output_path);
 
     Ok(())
 }
