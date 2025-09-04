@@ -98,4 +98,15 @@ for STREAM_INDEX in $(seq 0 $((NUM_AUDIO_STREAMS - 1))); do
       "$OUTDIR/${BASENAME}_stream${STREAM_INDEX}_emotion.flac"
 done
 
-echo "✅ All audio variants exported to $OUTDIR."
+echo "All audio variants exported to $OUTDIR."
+
+###########################
+## RE-ENCODED VIDEO ONLY ##
+###########################
+
+echo "Creating optimized video-only file without audio..."
+ffmpeg -y -i "$INPUT" \
+  -an -vf "fps=10,scale=224:224" \
+  -c:v libx264 -preset fast -crf 18 \
+  "$OUTDIR/${BASENAME}_vision.mp4"
+echo "Optimized video-only file (no audio) exported to $OUTDIR/${BASENAME}_vision.mp4"

@@ -1,8 +1,1 @@
-Next steps:
-create transcript -> python process_transcript.py separated/htdemucs/example/vocals.wav --model medium --output something.csv
-
-create mutation of pitch process for:
-volume/audio energy
-speechbrain?? (emotion detection) maybe use pitch data to infer emotion
-
-adjust process so that audio -> speech only, background only, normalized (for pitch??)
+USING DEEPGAZE! you will want to get that from git clone https://github.com/matthias-k/DeepGaze.git
