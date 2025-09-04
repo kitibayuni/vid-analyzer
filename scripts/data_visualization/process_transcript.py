@@ -33,12 +33,13 @@ def main(input_file, output_file, model_size):
     export_csv(result.to_dict(), output_file)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Transcribe audio with Whisper + stable-ts and export word-level CSV (0.2s intervals).")
+    parser = argparse.ArgumentParser(
+        description="Transcribe audio with Whisper + stable-ts and export word-level CSV (0.2s intervals)."
+    )
     parser.add_argument("input_file", type=str, help="Path to the input audio file")
-    parser.add_argument("--output", type=str, default=None, help="Output CSV file (default: input name + '_words.csv')")
-    parser.add_argument("--model", type=str, default="small", help="Whisper model size (tiny, base, small, medium, large)")
+    parser.add_argument("output_file", type=str, help="Path to the output CSV file (required)")
+    parser.add_argument("--model", type=str, default="small",
+                        help="Whisper model size (tiny, base, small, medium, large)")
 
     args = parser.parse_args()
-    output_file = args.output or args.input_file.rsplit(".", 1)[0] + "_words.csv"
-
-    main(args.input_file, output_file, args.model)
+    main(args.input_file, args.output_file, args.model)
