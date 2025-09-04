@@ -9,9 +9,15 @@ def main(input_file: str, output_file: str, chunk_sec: float = 5.0):
     # -------------------------------
     # Load preprocessed audio
     # -------------------------------
-    audio = np.load(input_file)  # mono, normalized, 16kHz
+    audio = np.load(input_file)  # could be mono or stereo
     sr = 16000  # sampling rate used in preprocessing
-    
+
+    # Convert stereo to mono if necessary
+    if audio.ndim == 2:
+        print(f"Converting stereo audio {audio.shape} to mono")
+        audio = np.mean(audio, axis=0)
+    print(f"Audio shape after conversion: {audio.shape}, duration: {len(audio)/sr:.2f}s")
+
     # -------------------------------
     # Load HuBERT emotion model
     # -------------------------------
@@ -28,7 +34,8 @@ def main(input_file: str, output_file: str, chunk_sec: float = 5.0):
     # -------------------------------
     chunk_samples = int(sr * chunk_sec)
     chunks = [audio[i:i + chunk_samples] for i in range(0, len(audio), chunk_samples)]
-    
+    print(f"Total chunks: {len(chunks)}, chunk size: {chunk_samples} samples (~{chunk_sec}s)")
+
     # -------------------------------
     # Run HuBERT emotion inference per chunk
     # -------------------------------
@@ -36,12 +43,12 @@ def main(input_file: str, output_file: str, chunk_sec: float = 5.0):
     emotion_labels = ["neutral", "happy", "excited", "sad", "angry"]
     
     for i, chunk in enumerate(chunks):
-        # Skip chunks that are too short
+        # Skip empty chunks
         if len(chunk) == 0:
             continue
-            
-        # Pad short chunks to minimum length if needed
-        if len(chunk) < 1600:  # minimum ~0.1 seconds
+        
+        # Pad short chunks to minimum length (~0.1s)
+        if len(chunk) < 1600:
             chunk = np.pad(chunk, (0, 1600 - len(chunk)), mode='constant')
         
         inputs = feature_extractor(chunk, sampling_rate=sr, return_tensors="pt", padding=True)
@@ -57,7 +64,7 @@ def main(input_file: str, output_file: str, chunk_sec: float = 5.0):
         chunk_scores.append({
             "chunk_index": i,
             "start_sec": i * chunk_sec,
-            "end_sec": (i + 1) * chunk_sec,
+            "end_sec": min((i + 1) * chunk_sec, len(audio)/sr),
             "predicted_emotion": predicted_emotion,
             "emotion_probs": probs.cpu().numpy().tolist()
         })
@@ -68,6 +75,7 @@ def main(input_file: str, output_file: str, chunk_sec: float = 5.0):
     df_scores = pd.DataFrame(chunk_scores)
     df_scores.to_csv(output_file, index=False)
     print(f"Saved HuBERT emotion scores per chunk to {output_file}")
+
 
 # -------------------------------
 # CLI arguments
