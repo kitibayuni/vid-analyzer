@@ -85,7 +85,6 @@ fi
 
 for STREAM_INDEX in $(seq 0 $((NUM_AUDIO_STREAMS - 1))); do
   echo "Processing audio stream: $STREAM_INDEX for $INPUT"
-
   ffmpeg -y -i "$INPUT" \
     -map 0:a:$STREAM_INDEX -ac 1 -ar 16000 -af "afftdn=nr=20" -c:a pcm_s16le \
       "$OUTDIR/${BASENAME}_stream${STREAM_INDEX}_whisper.wav" \
@@ -94,8 +93,9 @@ for STREAM_INDEX in $(seq 0 $((NUM_AUDIO_STREAMS - 1))); do
     -map 0:a:$STREAM_INDEX -ac 1 -ar 22050 -af "afftdn=nr=20,loudnorm" -c:a flac \
       "$OUTDIR/${BASENAME}_stream${STREAM_INDEX}_analysis.flac" \
     -map 0:a:$STREAM_INDEX -ac 1 -ar 22050 -af "loudnorm" -c:a flac \
-      "$OUTDIR/${BASENAME}_stream${STREAM_INDEX}_events.flac"
-
+      "$OUTDIR/${BASENAME}_stream${STREAM_INDEX}_events.flac" \
+    -map 0:a:$STREAM_INDEX -ac 1 -ar 16000 -af "volume=0.5" -c:a flac \
+      "$OUTDIR/${BASENAME}_stream${STREAM_INDEX}_emotion.flac"
 done
 
 echo "✅ All audio variants exported to $OUTDIR."
