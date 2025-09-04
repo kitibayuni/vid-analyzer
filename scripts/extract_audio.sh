@@ -106,7 +106,7 @@ echo "All audio variants exported to $OUTDIR."
 
 echo "Creating optimized video-only file without audio..."
 ffmpeg -y -i "$INPUT" \
-  -an -vf "fps=10,scale=224:224" \
-  -c:v libx264 -preset fast -crf 18 \
+  -an -vf "fps=15,scale=224:224" \
+  -c:v libx264 -preset fast -crf 16 \
   "$OUTDIR/${BASENAME}_vision.mp4"
 echo "Optimized video-only file (no audio) exported to $OUTDIR/${BASENAME}_vision.mp4"
