@@ -6,8 +6,9 @@ use ndarray::Array1;
 use ndarray_npy::write_npy;
 
 /// Preprocess FLAC audio for HuBERT:
-/// - Converts stereo -> mono
+/// - Handles mono or stereo
 /// - Resamples to target_sr
+/// - Converts to mono after resampling
 /// - Normalizes amplitude
 /// - Saves as .npy
 fn preprocess_flac(input_path: &str, output_path: &str, target_sr: u32) -> Result<(), Box<dyn std::error::Error>> {
@@ -24,12 +25,11 @@ fn preprocess_flac(input_path: &str, output_path: &str, target_sr: u32) -> Resul
         samples.push(s);
     }
 
-    // --- Convert stereo -> mono ---
-    let mono: Vec<f32> = if channels > 1 {
-        samples.chunks(channels).map(|c| c.iter().sum::<f32>() / channels as f32).collect()
-    } else {
-        samples
-    };
+    // --- Split into channel buffers ---
+    let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(samples.len() / channels); channels];
+    for (i, s) in samples.iter().enumerate() {
+        channel_buffers[i % channels].push(*s);
+    }
 
     // --- Resample if needed ---
     let processed: Vec<f32> = if sample_rate != target_sr {
@@ -39,20 +39,29 @@ fn preprocess_flac(input_path: &str, output_path: &str, target_sr: u32) -> Resul
             target_sr as usize,
             chunk_size,
             2,
-            1,
+            channels,
         )?;
-        let chunks: Vec<Vec<f32>> = mono.chunks(chunk_size).map(|c| c.to_vec()).collect();
-        let resampled_chunks: Vec<Vec<f32>> = resampler.process(&chunks, None)?;
-        resampled_chunks.into_iter().flatten().collect()
+
+        let resampled_channels: Vec<Vec<f32>> = resampler.process(&channel_buffers, None)?;
+
+        // Convert to mono
+        let n_samples = resampled_channels[0].len();
+        (0..n_samples)
+            .map(|i| resampled_channels.iter().map(|c| c[i]).sum::<f32>() / channels as f32)
+            .collect()
     } else {
-        mono
+        // No resampling, just convert to mono
+        let n_samples = channel_buffers[0].len();
+        (0..n_samples)
+            .map(|i| channel_buffers.iter().map(|c| c[i]).sum::<f32>() / channels as f32)
+            .collect()
     };
 
     // --- Normalize ---
     let max_amp = processed.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
     let normalized: Vec<f32> = processed.iter().map(|&s| s / max_amp.max(1e-8)).collect();
 
-    // --- Save as .npy using ndarray-npy ---
+    // --- Save as .npy ---
     let array = Array1::from(normalized);
     write_npy(output_path, &array)?;
 
