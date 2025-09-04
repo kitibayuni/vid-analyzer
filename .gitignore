@@ -3,6 +3,7 @@ ffmpeg.exe
 ffprobe.exe
 scripts/process_audio/target/*
 scripts/process_volume/target/*
+scripts/process_features/target/*
 scripts/pre-process_hubert/target/*
 example.flac
 scripts/data_visualization/venv/*
