@@ -1,0 +1,10 @@
+[package]
+name = "pre-process_hubert"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+claxon = "0.4.3"
+ndarray = "0.16.1"
+ndarray-npy = "0.9.1"
+rubato = "0.16.2"
