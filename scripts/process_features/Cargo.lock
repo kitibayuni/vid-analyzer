@@ -560,6 +560,7 @@ dependencies = [
  "indicatif",
  "pyin",
  "rayon",
+ "rustfft",
 ]
 
 [[package]]
