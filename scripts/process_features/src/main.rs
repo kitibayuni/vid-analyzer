@@ -5,9 +5,10 @@ mod modules {
     pub mod pitch;
     pub mod spectral_features;
     pub mod jitter_shimmer;
+    pub mod formant_analysis;
 }
 
-use modules::{rms_energy, pitch, spectral_features, jitter_shimmer};
+use modules::{rms_energy, pitch, spectral_features, jitter_shimmer, formant_analysis};
 
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
@@ -16,14 +17,17 @@ fn print_usage() {
     eprintln!("  {} --pitch-in <input.flac> --pitch-out <output.csv>", prog_name);
     eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv>", prog_name);
     eprintln!("  {} --jitter-in <input.flac> --jitter-out <output.csv>", prog_name);
+    eprintln!("  {} --formant-in <input.flac> --formant-out <output.csv>", prog_name);
     eprintln!("  {} --rms-in <rms_input.flac> --rms-out <rms_output.csv> --pitch-in <pitch_input.flac> --pitch-out <pitch_output.csv>", prog_name);
     eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv> --jitter-in <input.flac> --jitter-out <output.csv>", prog_name);
+    eprintln!("  {} --formant-in <input.flac> --formant-out <output.csv> --pitch-in <input.flac> --pitch-out <output.csv>", prog_name);
     eprintln!("");
     eprintln!("Features:");
     eprintln!("  --rms-*       : RMS energy and total energy analysis");
     eprintln!("  --pitch-*     : Pitch detection and analysis");
     eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, flux, zero-crossing rate)");
     eprintln!("  --jitter-*    : Jitter, shimmer, and harmonics-to-noise ratio analysis");
+    eprintln!("  --formant-*   : Formant frequency analysis (F1, F2, F3, F4)");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,6 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut spectral_output: Option<String> = None;
     let mut jitter_input: Option<String> = None;
     let mut jitter_output: Option<String> = None;
+    let mut formant_input: Option<String> = None;
+    let mut formant_output: Option<String> = None;
 
     // Parse arguments
     let mut i = 1;
@@ -111,6 +117,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 jitter_output = Some(args[i + 1].clone());
                 i += 2;
             }
+            "--formant-in" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --formant-in requires a file path");
+                    std::process::exit(1);
+                }
+                formant_input = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--formant-out" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --formant-out requires a file path");
+                    std::process::exit(1);
+                }
+                formant_output = Some(args[i + 1].clone());
+                i += 2;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 print_usage();
@@ -124,6 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_pitch = pitch_input.is_some() || pitch_output.is_some();
     let run_spectral = spectral_input.is_some() || spectral_output.is_some();
     let run_jitter = jitter_input.is_some() || jitter_output.is_some();
+    let run_formant = formant_input.is_some() || formant_output.is_some();
 
     if run_rms && (rms_input.is_none() || rms_output.is_none()) {
         eprintln!("Error: Both --rms-in and --rms-out are required for RMS processing");
@@ -145,7 +168,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    if !run_rms && !run_pitch && !run_spectral && !run_jitter {
+    if run_formant && (formant_input.is_none() || formant_output.is_none()) {
+        eprintln!("Error: Both --formant-in and --formant-out are required for formant processing");
+        std::process::exit(1);
+    }
+
+    if !run_rms && !run_pitch && !run_spectral && !run_jitter && !run_formant {
         eprintln!("Error: No processing specified");
         print_usage();
         std::process::exit(1);
@@ -170,6 +198,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if run_jitter {
         println!("=== Running Jitter/Shimmer Analysis ===");
         jitter_shimmer::process(&jitter_input.unwrap(), &jitter_output.unwrap())?;
+    }
+
+    if run_formant {
+        println!("=== Running Formant Analysis ===");
+        formant_analysis::process(&formant_input.unwrap(), &formant_output.unwrap())?;
     }
 
     println!("=== All processing complete ===");
