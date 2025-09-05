@@ -1,19 +1,26 @@
-// main.rs
 use std::env;
 
 mod modules {
     pub mod rms_energy;
     pub mod pitch;
+    pub mod spectral_features;
 }
 
-use modules::{rms_energy, pitch};
+use modules::{rms_energy, pitch, spectral_features};
 
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
     eprintln!("Usage:");
     eprintln!("  {} --rms-in <input.flac> --rms-out <output.csv>", prog_name);
     eprintln!("  {} --pitch-in <input.flac> --pitch-out <output.csv>", prog_name);
+    eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv>", prog_name);
     eprintln!("  {} --rms-in <rms_input.flac> --rms-out <rms_output.csv> --pitch-in <pitch_input.flac> --pitch-out <pitch_output.csv>", prog_name);
+    eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv> --rms-in <input.flac> --rms-out <output.csv>", prog_name);
+    eprintln!("");
+    eprintln!("Features:");
+    eprintln!("  --rms-*       : RMS energy and total energy analysis");
+    eprintln!("  --pitch-*     : Pitch detection and analysis");
+    eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, zero-crossing rate)");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,6 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rms_output: Option<String> = None;
     let mut pitch_input: Option<String> = None;
     let mut pitch_output: Option<String> = None;
+    let mut spectral_input: Option<String> = None;
+    let mut spectral_output: Option<String> = None;
 
     // Parse arguments
     let mut i = 1;
@@ -65,6 +74,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pitch_output = Some(args[i + 1].clone());
                 i += 2;
             }
+            "--spectral-in" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --spectral-in requires a file path");
+                    std::process::exit(1);
+                }
+                spectral_input = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--spectral-out" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --spectral-out requires a file path");
+                    std::process::exit(1);
+                }
+                spectral_output = Some(args[i + 1].clone());
+                i += 2;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 print_usage();
@@ -76,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Validate argument combinations
     let run_rms = rms_input.is_some() || rms_output.is_some();
     let run_pitch = pitch_input.is_some() || pitch_output.is_some();
+    let run_spectral = spectral_input.is_some() || spectral_output.is_some();
 
     if run_rms && (rms_input.is_none() || rms_output.is_none()) {
         eprintln!("Error: Both --rms-in and --rms-out are required for RMS processing");
@@ -87,7 +113,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    if !run_rms && !run_pitch {
+    if run_spectral && (spectral_input.is_none() || spectral_output.is_none()) {
+        eprintln!("Error: Both --spectral-in and --spectral-out are required for spectral processing");
+        std::process::exit(1);
+    }
+
+    if !run_rms && !run_pitch && !run_spectral {
         eprintln!("Error: No processing specified");
         print_usage();
         std::process::exit(1);
@@ -102,6 +133,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if run_pitch {
         println!("=== Running Pitch Analysis ===");
         pitch::process(&pitch_input.unwrap(), &pitch_output.unwrap())?;
+    }
+
+    if run_spectral {
+        println!("=== Running Spectral Features Analysis ===");
+        spectral_features::process(&spectral_input.unwrap(), &spectral_output.unwrap())?;
     }
 
     println!("=== All processing complete ===");
