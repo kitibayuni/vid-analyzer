@@ -4,9 +4,10 @@ mod modules {
     pub mod rms_energy;
     pub mod pitch;
     pub mod spectral_features;
+    pub mod jitter_shimmer;
 }
 
-use modules::{rms_energy, pitch, spectral_features};
+use modules::{rms_energy, pitch, spectral_features, jitter_shimmer};
 
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
@@ -14,13 +15,15 @@ fn print_usage() {
     eprintln!("  {} --rms-in <input.flac> --rms-out <output.csv>", prog_name);
     eprintln!("  {} --pitch-in <input.flac> --pitch-out <output.csv>", prog_name);
     eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv>", prog_name);
+    eprintln!("  {} --jitter-in <input.flac> --jitter-out <output.csv>", prog_name);
     eprintln!("  {} --rms-in <rms_input.flac> --rms-out <rms_output.csv> --pitch-in <pitch_input.flac> --pitch-out <pitch_output.csv>", prog_name);
-    eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv> --rms-in <input.flac> --rms-out <output.csv>", prog_name);
+    eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv> --jitter-in <input.flac> --jitter-out <output.csv>", prog_name);
     eprintln!("");
     eprintln!("Features:");
     eprintln!("  --rms-*       : RMS energy and total energy analysis");
     eprintln!("  --pitch-*     : Pitch detection and analysis");
-    eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, zero-crossing rate)");
+    eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, flux, zero-crossing rate)");
+    eprintln!("  --jitter-*    : Jitter, shimmer, and harmonics-to-noise ratio analysis");
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,6 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pitch_output: Option<String> = None;
     let mut spectral_input: Option<String> = None;
     let mut spectral_output: Option<String> = None;
+    let mut jitter_input: Option<String> = None;
+    let mut jitter_output: Option<String> = None;
 
     // Parse arguments
     let mut i = 1;
@@ -90,6 +95,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 spectral_output = Some(args[i + 1].clone());
                 i += 2;
             }
+            "--jitter-in" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --jitter-in requires a file path");
+                    std::process::exit(1);
+                }
+                jitter_input = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--jitter-out" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: --jitter-out requires a file path");
+                    std::process::exit(1);
+                }
+                jitter_output = Some(args[i + 1].clone());
+                i += 2;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 print_usage();
@@ -102,6 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_rms = rms_input.is_some() || rms_output.is_some();
     let run_pitch = pitch_input.is_some() || pitch_output.is_some();
     let run_spectral = spectral_input.is_some() || spectral_output.is_some();
+    let run_jitter = jitter_input.is_some() || jitter_output.is_some();
 
     if run_rms && (rms_input.is_none() || rms_output.is_none()) {
         eprintln!("Error: Both --rms-in and --rms-out are required for RMS processing");
@@ -118,7 +140,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    if !run_rms && !run_pitch && !run_spectral {
+    if run_jitter && (jitter_input.is_none() || jitter_output.is_none()) {
+        eprintln!("Error: Both --jitter-in and --jitter-out are required for jitter/shimmer processing");
+        std::process::exit(1);
+    }
+
+    if !run_rms && !run_pitch && !run_spectral && !run_jitter {
         eprintln!("Error: No processing specified");
         print_usage();
         std::process::exit(1);
@@ -138,6 +165,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if run_spectral {
         println!("=== Running Spectral Features Analysis ===");
         spectral_features::process(&spectral_input.unwrap(), &spectral_output.unwrap())?;
+    }
+
+    if run_jitter {
+        println!("=== Running Jitter/Shimmer Analysis ===");
+        jitter_shimmer::process(&jitter_input.unwrap(), &jitter_output.unwrap())?;
     }
 
     println!("=== All processing complete ===");
