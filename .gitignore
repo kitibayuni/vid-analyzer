@@ -7,4 +7,4 @@ scripts/process_features/target/*
 scripts/pre-process_hubert/target/*
 example.flac
 scripts/data_visualization/venv/*
-scripts/data_visualization/DeepGaze
+scripts/data_visualization/DeepGaze/*
