@@ -52,6 +52,7 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
         headers.push(format!("chan{}_spectral_rolloff", c + 1));
         headers.push(format!("chan{}_spectral_bandwidth", c + 1));
         headers.push(format!("chan{}_spectral_flatness", c + 1));
+        headers.push(format!("chan{}_spectral_flux", c + 1));
         headers.push(format!("chan{}_zero_crossing_rate", c + 1));
     }
     writer.write_record(&headers)?;
@@ -61,14 +62,17 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     let max_len = channel_buffers.iter().map(|v| v.len()).max().unwrap_or(0);
     let frame_hop = frame_len; // non-overlapping frames
     
+    // Store previous magnitude spectra for spectral flux calculation
+    let mut prev_magnitude_spectra: Vec<Option<Vec<f64>>> = vec![None; channels];
+    
     for start in (0..max_len).step_by(frame_hop) {
         let time_sec = start as f64 / samplerate as f64;
         let mut row: Vec<String> = vec![format!("{:.4}", time_sec)];
         
-        for chan in &channel_buffers {
+        for (chan_idx, chan) in channel_buffers.iter().enumerate() {
             if start >= chan.len() {
                 // Add empty values for all spectral features
-                for _ in 0..5 {
+                for _ in 0..6 {
                     row.push("".to_string());
                 }
                 continue;
@@ -100,13 +104,18 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
             let spectral_rolloff = calculate_spectral_rolloff(&magnitude_spectrum, samplerate, 0.85);
             let spectral_bandwidth = calculate_spectral_bandwidth(&magnitude_spectrum, samplerate, spectral_centroid);
             let spectral_flatness = calculate_spectral_flatness(&magnitude_spectrum);
+            let spectral_flux = calculate_spectral_flux(&magnitude_spectrum, &prev_magnitude_spectra[chan_idx]);
             let zero_crossing_rate = calculate_zero_crossing_rate(frame);
             
             row.push(format!("{:.2}", spectral_centroid));
             row.push(format!("{:.2}", spectral_rolloff));
             row.push(format!("{:.2}", spectral_bandwidth));
             row.push(format!("{:.6}", spectral_flatness));
+            row.push(format!("{:.6}", spectral_flux));
             row.push(format!("{:.6}", zero_crossing_rate));
+            
+            // Store current magnitude spectrum for next iteration
+            prev_magnitude_spectra[chan_idx] = Some(magnitude_spectrum);
         }
         
         writer.write_record(&row)?;
@@ -188,6 +197,26 @@ fn calculate_spectral_flatness(magnitude_spectrum: &[f64]) -> f64 {
         geometric_mean.exp() / arithmetic_mean
     } else {
         0.0
+    }
+}
+
+fn calculate_spectral_flux(current_spectrum: &[f64], prev_spectrum: &Option<Vec<f64>>) -> f64 {
+    match prev_spectrum {
+        Some(prev) => {
+            if prev.len() != current_spectrum.len() {
+                return 0.0;
+            }
+            
+            // Calculate sum of squared differences between consecutive frames
+            let mut flux = 0.0;
+            for (curr, prev_val) in current_spectrum.iter().zip(prev.iter()) {
+                let diff = curr - prev_val;
+                flux += diff * diff;
+            }
+            
+            flux.sqrt()
+        }
+        None => 0.0, // First frame has no previous frame to compare with
     }
 }
 
