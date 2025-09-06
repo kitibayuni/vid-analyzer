@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# usage: ./separate_av.sh input.mp4
+# usage: ./extract_tracks.sh input.mp4
 # requires: ffmpeg, ffprobe
 
 ARG="$1"
@@ -24,7 +24,7 @@ if [ ! -d "$OUTDIR" ]; then
     exit 1
 fi
 
-echo "Separating audio tracks from: $INPUT"
+echo "Separating audio tracks (48 kHz WAV) and video tracks from: $INPUT"
 
 # --- Audio tracks ---
 NUM_AUDIO_STREAMS=$(ffprobe -v error -select_streams a \
@@ -34,9 +34,9 @@ if [ "$NUM_AUDIO_STREAMS" -eq 0 ]; then
     echo "No audio streams found!"
 else
     for STREAM_INDEX in $(seq 0 $((NUM_AUDIO_STREAMS - 1))); do
-        OUTFILE="$OUTDIR/${BASENAME}_stream${STREAM_INDEX}.flac"
-        echo "Exporting audio stream $STREAM_INDEX → $OUTFILE"
-        ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -c:a flac "$OUTFILE"
+        OUTFILE="$OUTDIR/${BASENAME}_stream${STREAM_INDEX}.wav"
+        echo "Exporting audio stream $STREAM_INDEX → $OUTFILE (48 kHz WAV)"
+        ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -c:a pcm_s16le "$OUTFILE"
     done
 fi
 
@@ -49,10 +49,9 @@ if [ "$NUM_VIDEO_STREAMS" -eq 0 ]; then
 else
     for STREAM_INDEX in $(seq 0 $((NUM_VIDEO_STREAMS - 1))); do
         OUTFILE="$OUTDIR/${BASENAME}_video${STREAM_INDEX}.mp4"
-        echo "Exporting video stream $STREAM_INDEX → $OUTFILE"
-        # Copy video codec and remove audio
+        echo "Exporting video stream $STREAM_INDEX → $OUTFILE (original codec, no audio)"
         ffmpeg -y -i "$INPUT" -map 0:v:$STREAM_INDEX -an -c:v copy "$OUTFILE"
     done
 fi
 
-echo "Audio and video separation complete. All files in $OUTDIR."
+echo "All audio tracks exported as 48 kHz WAV, video tracks preserved."
