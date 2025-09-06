@@ -136,7 +136,7 @@ else
             echo "  Format: 48 kHz 32-bit float WAV"
             echo "  Starting export..."
             
-            ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -c:a pcm_f32le "$OUTFILE"
+            ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -ac 1 -c:a pcm_f32le "$OUTFILE"
             
             if [ $? -eq 0 ]; then
                 OUTFILE_SIZE=$(du -h "$OUTFILE" | cut -f1)
