@@ -24,7 +24,7 @@ if [ ! -d "$OUTDIR" ]; then
     exit 1
 fi
 
-echo "Separating audio tracks (48 kHz WAV) and video tracks from: $INPUT"
+echo "Separating audio tracks (48 kHz 32-bit float WAV) and video tracks from: $INPUT"
 
 # --- Audio tracks ---
 NUM_AUDIO_STREAMS=$(ffprobe -v error -select_streams a \
@@ -61,8 +61,8 @@ else
         # Export only if less than 90% silent
         if (( $(echo "$SILENCE_FRAC < 0.9" | bc -l) )); then
             OUTFILE="$OUTDIR/${BASENAME}_stream${STREAM_INDEX}.wav"
-            echo "Exporting audio stream $STREAM_INDEX → $OUTFILE (48 kHz WAV, $SILENCE_FRAC fraction silent)"
-            ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -c:a pcm_s16le "$OUTFILE"
+            echo "Exporting audio stream $STREAM_INDEX → $OUTFILE (48 kHz 32-bit float WAV, $SILENCE_FRAC fraction silent)"
+            ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -c:a pcm_f32le "$OUTFILE"
         else
             echo "Skipping mostly silent audio stream $STREAM_INDEX ($SILENCE_FRAC fraction silent)"
         fi
