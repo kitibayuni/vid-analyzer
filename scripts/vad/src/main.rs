@@ -1,10 +1,8 @@
 use std::env;
-use std::fs::File;
 use hound::{WavReader, SampleFormat};
-use webrtc_vad::Vad;
+use webrtc_vad::{Vad, VadMode, SampleRate};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get input WAV path from argument
+fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} <input.wav>", args[0]);
@@ -12,11 +10,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let input_path = &args[1];
 
-    // Open WAV file
-    let mut reader = WavReader::open(input_path)?;
+    let mut reader = WavReader::open(input_path).expect("Failed to open WAV");
     let spec = reader.spec();
 
-    // Ensure 48 kHz, mono
     if spec.channels != 1 {
         eprintln!("Only mono audio supported");
         std::process::exit(1);
@@ -26,32 +22,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    // Convert samples to i16 for webrtc-vad
     let samples: Vec<i16> = match spec.sample_format {
         SampleFormat::Int => reader.samples::<i16>().map(|s| s.unwrap()).collect(),
         SampleFormat::Float => reader.samples::<f32>()
-            .map(|s| {
-                let f = s.unwrap();
-                (f.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
-            })
+            .map(|s| (s.unwrap().clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
             .collect(),
     };
 
-    // Initialize VAD (mode 3 = aggressive)
-    let mut vad = Vad::new_with_rate(webrtc_vad::SampleRate::Rate48000, webrtc_vad::VadMode::Aggressive)?;
+    let mut vad = Vad::new_with_rate(SampleRate::Rate48kHz);
+    vad.set_mode(VadMode::Aggressive);
 
-    // Split audio into 30ms frames
-    let frame_size = (48000.0 * 0.03) as usize; // 30ms
+    let frame_size = (48000.0 * 0.03) as usize; // 30 ms
     let mut speech_detected = false;
 
     for frame in samples.chunks(frame_size) {
         if frame.len() < frame_size { break; }
-        if vad.is_speech(frame, 48000)? {
+
+        // unwrap Result<bool, ()>, panic if error
+        if vad.is_voice_segment(frame).expect("VAD failed on this frame") {
             speech_detected = true;
             break;
         }
     }
 
-    println!("{}", speech_detected); // true or false
-    Ok(())
+
+    println!("{}", speech_detected);
 }
