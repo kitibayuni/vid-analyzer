@@ -7,5 +7,7 @@ scripts/process_volume/target/*
 scripts/process_features/target/*
 scripts/pre-process_hubert/target/*
 example.flac
+example1.flac
 scripts/data_visualization/venv/*
 scripts/data_visualization/DeepGaze/*
+scripts/vad/target/*
