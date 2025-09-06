@@ -1,4 +1,5 @@
 ## ignoring these larger binaries for now
+temp/*
 ffmpeg.exe
 ffprobe.exe
 scripts/process_audio/target/*
