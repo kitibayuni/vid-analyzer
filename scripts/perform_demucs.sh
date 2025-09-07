@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # --- CONFIG ---
-MODEL="htdemucs"        # or mdx_extra_q / mdx_q
-SEGMENT_TIME=600        # seconds per chunk (10 minutes)
-OVERLAP=2               # seconds overlap between chunks (for splitting)
+MODEL="htdemucs"
+SEGMENT_TIME=600
+OVERLAP=2
 STEMS=("vocals" "no_vocals")
-APPLY_CROSSFADE=false   # Set to true to smooth chunk boundaries (recommended small value)
-CROSSFADE_DURATION=1    # seconds for crossfade at boundaries if enabled
+APPLY_CROSSFADE=false
+CROSSFADE_DURATION=1
 # ----------------
 
 # --- Advanced progress bar ---
@@ -54,13 +54,11 @@ while [ $start -lt $DURATION ]; do
     [ $end -gt $DURATION ] && end=$DURATION
     out=$(printf "%s/chunk_%03d.wav" "$CHUNKS_DIR" "$idx")
 
-    # --- Export chunks as 32-bit float mono ---
     ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
         -af "atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS" \
         -ac 1 -c:a pcm_f32le "$out"
 
     progress_bar $((idx+1)) $TOTAL_CHUNKS "Splitting chunks"
-
     start=$((start + SEGMENT_TIME))
     idx=$((idx + 1))
 done
@@ -75,7 +73,7 @@ cd - >/dev/null
 SEPDIR=$(find "${WORKDIR}/separated" -maxdepth 1 -type d -name "${MODEL}*" | head -n1)
 [ -z "$SEPDIR" ] && { echo "Error: Could not find Demucs output"; exit 1; }
 
-# --- Stitch function: concatenates all chunks in 32-bit float mono ---
+# --- Stitch function with progress bar ---
 stitch_stem() {
     local stem="$1"
     echo ">>> Stitching stem: $stem"
@@ -89,18 +87,18 @@ stitch_stem() {
 
     [ ${#chunk_files[@]} -eq 0 ] && { echo "Error: No $stem files found"; return 1; }
 
-    # Create a list file for ffmpeg concat
+    total_chunks=${#chunk_files[@]}
     concat_list="${OUTDIR}/${stem}_concat.txt"
     rm -f "$concat_list"
-    for cf in "${chunk_files[@]}"; do
-        echo "file '$cf'" >> "$concat_list"
+    for ((i=0;i<total_chunks;i++)); do
+        echo "file '${chunk_files[i]}'" >> "$concat_list"
+        progress_bar $((i+1)) $total_chunks "Preparing stitch list $stem"
     done
+    echo ""
 
-    # Concatenate all chunks as 32-bit float mono
     ffmpeg -hide_banner -loglevel error -f concat -safe 0 -i "$concat_list" \
         -ac 1 -c:a pcm_f32le "${OUTDIR}/${stem}.wav"
 
-    # Optional: crossfade at boundaries (if enabled)
     if [ "$APPLY_CROSSFADE" = true ]; then
         tmp="${OUTDIR}/${stem}_xf.wav"
         ffmpeg -hide_banner -loglevel error -y -i "${OUTDIR}/${stem}.wav}" \
@@ -108,6 +106,7 @@ stitch_stem() {
             -ac 1 -c:a pcm_f32le "$tmp"
         mv "$tmp" "${OUTDIR}/${stem}.wav"
     fi
+    echo "✓ Completed stitching: $stem"
 }
 
 # --- Process all stems ---
@@ -115,7 +114,7 @@ for stem in "${STEMS[@]}"; do
     stitch_stem "$stem"
 done
 
-# --- Combine non-vocals ---
+# --- Combine non-vocals with progress bar ---
 echo ">>> Combining non-vocal stems..."
 non_vocals=()
 for stem in "${STEMS[@]}"; do
@@ -126,10 +125,15 @@ done
 
 if [ ${#non_vocals[@]} -gt 0 ]; then
     input_args=()
-    for f in "${non_vocals[@]}"; do input_args+=("-i" "$f"); done
+    total_nonvocals=${#non_vocals[@]}
+    for ((i=0;i<total_nonvocals;i++)); do
+        input_args+=("-i" "${non_vocals[i]}")
+        progress_bar $((i+1)) $total_nonvocals "Adding non-vocals for amix"
+    done
+    echo ""
 
     ffmpeg -hide_banner -loglevel error -y "${input_args[@]}" \
-        -filter_complex "amix=inputs=${#non_vocals[@]}:duration=longest[out]" \
+        -filter_complex "amix=inputs=${total_nonvocals}:duration=longest[out]" \
         -map "[out]" -ac 1 -c:a pcm_f32le "${INPUT_DIR}/${BASENAME}_nonvocals.wav"
 
     echo "✓ Created: ${INPUT_DIR}/${BASENAME}_nonvocals.wav"
