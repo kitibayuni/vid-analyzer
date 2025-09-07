@@ -4,29 +4,26 @@ set -euo pipefail
 # --- CONFIG ---
 MODEL="htdemucs"        # or mdx_extra_q / mdx_q
 SEGMENT_TIME=600        # seconds per chunk (10 minutes)
-OVERLAP=2               # seconds overlap between chunks
+OVERLAP=2               # seconds overlap between chunks (for splitting)
 STEMS=("vocals" "no_vocals")
+APPLY_CROSSFADE=false   # Set to true to smooth chunk boundaries (recommended small value)
+CROSSFADE_DURATION=1    # seconds for crossfade at boundaries if enabled
 # ----------------
 
-# Advanced progress bar function
+# --- Advanced progress bar ---
 progress_bar() {
     local current=$1 total=$2 task_name="${3:-Processing}" width=40
     local percentage=$((current*100/total))
     local filled=$((current*width/total))
-
-    # Spinner characters
     local spinner="/-\\|"
     local spin_char=${spinner:$((current % ${#spinner})):1}
-
-    # Build the bar
     local bar=""
     for ((i=0;i<filled;i++)); do bar+="█"; done
     for ((i=filled;i<width;i++)); do bar+="░"; done
-
     printf "\r%s [%s] %d%% (%d/%d) %s" "$spin_char" "$bar" "$percentage" "$current" "$total" "$task_name"
 }
 
-# --- INPUT ---
+# --- Input ---
 if [ $# -lt 1 ]; then
     echo "Usage: $0 input.wav"
     exit 1
@@ -57,8 +54,10 @@ while [ $start -lt $DURATION ]; do
     [ $end -gt $DURATION ] && end=$DURATION
     out=$(printf "%s/chunk_%03d.wav" "$CHUNKS_DIR" "$idx")
 
+    # --- Export chunks as 32-bit float mono ---
     ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
-        -af "atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS" "$out"
+        -af "atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS" \
+        -ac 1 -c:a pcm_f32le "$out"
 
     progress_bar $((idx+1)) $TOTAL_CHUNKS "Splitting chunks"
 
@@ -76,36 +75,39 @@ cd - >/dev/null
 SEPDIR=$(find "${WORKDIR}/separated" -maxdepth 1 -type d -name "${MODEL}*" | head -n1)
 [ -z "$SEPDIR" ] && { echo "Error: Could not find Demucs output"; exit 1; }
 
-# --- Stitch function ---
-stitch_stem () {
+# --- Stitch function: concatenates all chunks in 32-bit float mono ---
+stitch_stem() {
     local stem="$1"
     echo ">>> Stitching stem: $stem"
 
-    local inputs=()
+    local chunk_files=()
     for f in "${CHUNKS_DIR}"/chunk_*.wav; do
         name=$(basename "$f" .wav)
         stem_file="${SEPDIR}/${name}/${stem}.wav"
-        [ -f "$stem_file" ] && inputs+=("$stem_file")
+        [ -f "$stem_file" ] && chunk_files+=("$stem_file")
     done
 
-    [ ${#inputs[@]} -eq 0 ] && { echo "Error: No $stem files found"; return 1; }
+    [ ${#chunk_files[@]} -eq 0 ] && { echo "Error: No $stem files found"; return 1; }
 
-    tmp="${OUTDIR}/${stem}_tmp0.wav"
-    ffmpeg -hide_banner -loglevel error -y -i "${inputs[0]}" -ac 1 -c:a pcm_f32le "$tmp"
-
-    total_ops=$((${#inputs[@]} - 1))
-    for ((i=1; i<${#inputs[@]}; i++)); do
-        next="${inputs[i]}"
-        outtmp="${OUTDIR}/${stem}_tmp${i}.wav"
-        progress_bar $i $total_ops "Crossfading $stem"
-        ffmpeg -hide_banner -loglevel error -y -i "$tmp" -i "$next" \
-            -filter_complex "acrossfade=d=${OVERLAP}:c1=tri:c2=tri" \
-            -ac 1 -c:a pcm_f32le "$outtmp"
-        rm -f "$tmp"
-        tmp="$outtmp"
+    # Create a list file for ffmpeg concat
+    concat_list="${OUTDIR}/${stem}_concat.txt"
+    rm -f "$concat_list"
+    for cf in "${chunk_files[@]}"; do
+        echo "file '$cf'" >> "$concat_list"
     done
-    echo ""
-    mv "$tmp" "${OUTDIR}/${stem}.wav"
+
+    # Concatenate all chunks as 32-bit float mono
+    ffmpeg -hide_banner -loglevel error -f concat -safe 0 -i "$concat_list" \
+        -ac 1 -c:a pcm_f32le "${OUTDIR}/${stem}.wav"
+
+    # Optional: crossfade at boundaries (if enabled)
+    if [ "$APPLY_CROSSFADE" = true ]; then
+        tmp="${OUTDIR}/${stem}_xf.wav"
+        ffmpeg -hide_banner -loglevel error -y -i "${OUTDIR}/${stem}.wav}" \
+            -af "acrossfade=d=${CROSSFADE_DURATION}:c1=tri:c2=tri" \
+            -ac 1 -c:a pcm_f32le "$tmp"
+        mv "$tmp" "${OUTDIR}/${stem}.wav"
+    fi
 }
 
 # --- Process all stems ---
@@ -123,21 +125,21 @@ for stem in "${STEMS[@]}"; do
 done
 
 if [ ${#non_vocals[@]} -gt 0 ]; then
-    # Build ffmpeg input arguments
     input_args=()
-    for f in "${non_vocals[@]}"; do
-        input_args+=("-i" "$f")
-    done
+    for f in "${non_vocals[@]}"; do input_args+=("-i" "$f"); done
 
-    # Filter complex for amix
-    ffmpeg -hide_banner -loglevel error -y \
-        "${input_args[@]}" \
+    ffmpeg -hide_banner -loglevel error -y "${input_args[@]}" \
         -filter_complex "amix=inputs=${#non_vocals[@]}:duration=longest[out]" \
-        -map "[out]" -ac 1 -c:a pcm_f32le "${OUTDIR}/${BASENAME}_nonvocals.wav"
+        -map "[out]" -ac 1 -c:a pcm_f32le "${INPUT_DIR}/${BASENAME}_nonvocals.wav"
 
-    echo "✓ Created: ${OUTDIR}/${BASENAME}_nonvocals.wav"
+    echo "✓ Created: ${INPUT_DIR}/${BASENAME}_nonvocals.wav"
 fi
 
+# --- Move vocals ---
+if [ -f "${OUTDIR}/vocals.wav" ]; then
+    mv "${OUTDIR}/vocals.wav" "${INPUT_DIR}/${BASENAME}_vocals.wav"
+    echo "✓ Created: ${INPUT_DIR}/${BASENAME}_vocals.wav"
+fi
 
 # --- Cleanup ---
 rm -rf "$WORKDIR"
