@@ -10,7 +10,7 @@ APPLY_CROSSFADE=false
 CROSSFADE_DURATION=1
 # ----------------
 
-# --- Advanced progress bar ---
+# --- Progress bar ---
 progress_bar() {
     local current=$1 total=$2 task_name="${3:-Processing}" width=40
     local percentage=$((current*100/total))
@@ -38,7 +38,7 @@ OUTDIR="${WORKDIR}/stitched"
 
 mkdir -p "$CHUNKS_DIR" "$OUTDIR"
 
-# --- Get duration ---
+# --- Split input into overlapping chunks ---
 DURATION=$(ffprobe -v error -show_entries format=duration \
     -of default=noprint_wrappers=1:nokey=1 "$INPUT")
 DURATION=${DURATION%.*}
@@ -64,6 +64,13 @@ while [ $start -lt $DURATION ]; do
 done
 echo ""
 
+# --- Verify all chunks exist ---
+chunk_count=$(ls -1 "${CHUNKS_DIR}"/chunk_*.wav 2>/dev/null | wc -l)
+if [ "$chunk_count" -lt "$TOTAL_CHUNKS" ]; then
+    echo "Error: Only $chunk_count out of $TOTAL_CHUNKS chunks exist. Aborting."
+    exit 1
+fi
+
 # --- Run Demucs ---
 echo ">>> Running Demucs ($MODEL) on all chunks..."
 cd "$WORKDIR"
@@ -73,39 +80,39 @@ cd - >/dev/null
 SEPDIR=$(find "${WORKDIR}/separated" -maxdepth 1 -type d -name "${MODEL}*" | head -n1)
 [ -z "$SEPDIR" ] && { echo "Error: Could not find Demucs output"; exit 1; }
 
-# --- Stitch function with progress bar ---
+# --- Overlap-aware stitching ---
 stitch_stem() {
     local stem="$1"
-    echo ">>> Stitching stem: $stem"
+    echo ">>> Stitching stem with crossfade: $stem"
 
     local chunk_files=()
     for f in "${CHUNKS_DIR}"/chunk_*.wav; do
         name=$(basename "$f" .wav)
         stem_file="${SEPDIR}/${name}/${stem}.wav"
-        [ -f "$stem_file" ] && chunk_files+=("$stem_file")
+        if [ -f "$stem_file" ] && [ -s "$stem_file" ]; then
+            chunk_files+=("$(realpath "$stem_file")")
+        else
+            echo "Warning: Missing or empty $stem for chunk $name"
+        fi
     done
 
-    [ ${#chunk_files[@]} -eq 0 ] && { echo "Error: No $stem files found"; return 1; }
-
-    total_chunks=${#chunk_files[@]}
-    concat_list="${OUTDIR}/${stem}_concat.txt"
-    rm -f "$concat_list"
-    for ((i=0;i<total_chunks;i++)); do
-        echo "file '${chunk_files[i]}'" >> "$concat_list"
-        progress_bar $((i+1)) $total_chunks "Preparing stitch list $stem"
-    done
-    echo ""
-
-    ffmpeg -hide_banner -loglevel error -f concat -safe 0 -i "$concat_list" \
-        -ac 1 -c:a pcm_f32le "${OUTDIR}/${stem}.wav"
-
-    if [ "$APPLY_CROSSFADE" = true ]; then
-        tmp="${OUTDIR}/${stem}_xf.wav"
-        ffmpeg -hide_banner -loglevel error -y -i "${OUTDIR}/${stem}.wav}" \
-            -af "acrossfade=d=${CROSSFADE_DURATION}:c1=tri:c2=tri" \
-            -ac 1 -c:a pcm_f32le "$tmp"
-        mv "$tmp" "${OUTDIR}/${stem}.wav"
+    if [ ${#chunk_files[@]} -eq 0 ]; then
+        echo "Error: No valid $stem files found. Skipping stitching."
+        return 1
     fi
+
+    local stitched="${OUTDIR}/${stem}.wav"
+    cp "${chunk_files[0]}" "$stitched"
+
+    for ((i=1;i<${#chunk_files[@]};i++)); do
+        tmp="${OUTDIR}/tmp_${stem}_${i}.wav"
+        ffmpeg -y -hide_banner -loglevel error -i "$stitched" -i "${chunk_files[i]}" \
+            -filter_complex "acrossfade=d=${CROSSFADE_DURATION}:c1=tri:c2=tri" \
+            -ac 1 -c:a pcm_f32le "$tmp"  # <-- FORCE MONO HERE
+        mv "$tmp" "$stitched"
+    done
+
+    [ -s "$stitched" ] || { echo "Error: stitching failed for $stem"; return 1; }
     echo "✓ Completed stitching: $stem"
 }
 
@@ -114,35 +121,41 @@ for stem in "${STEMS[@]}"; do
     stitch_stem "$stem"
 done
 
-# --- Combine non-vocals with progress bar ---
-echo ">>> Combining non-vocal stems..."
-non_vocals=()
-for stem in "${STEMS[@]}"; do
-    if [ "$stem" != "vocals" ] && [ -f "${OUTDIR}/${stem}.wav" ]; then
-        non_vocals+=("${OUTDIR}/${stem}.wav")
-    fi
-done
-
-if [ ${#non_vocals[@]} -gt 0 ]; then
-    input_args=()
-    total_nonvocals=${#non_vocals[@]}
-    for ((i=0;i<total_nonvocals;i++)); do
-        input_args+=("-i" "${non_vocals[i]}")
-        progress_bar $((i+1)) $total_nonvocals "Adding non-vocals for amix"
+# --- Combine non-vocals ---
+combine_nonvocals() {
+    local non_vocals=()
+    for stem in "${STEMS[@]}"; do
+        if [ "$stem" != "vocals" ] && [ -f "${OUTDIR}/${stem}.wav" ] && [ -s "${OUTDIR}/${stem}.wav" ]; then
+            non_vocals+=("$(realpath "${OUTDIR}/${stem}.wav")")
+        fi
     done
-    echo ""
 
-    ffmpeg -hide_banner -loglevel error -y "${input_args[@]}" \
-        -filter_complex "amix=inputs=${total_nonvocals}:duration=longest[out]" \
-        -map "[out]" -ac 1 -c:a pcm_f32le "${INPUT_DIR}/${BASENAME}_nonvocals.wav"
+    if [ ${#non_vocals[@]} -eq 0 ]; then
+        echo "Warning: No non-vocal stems found. Skipping combination."
+        return
+    fi
 
+    local input_args=()
+    for f in "${non_vocals[@]}"; do
+        input_args+=("-i" "$f")
+    done
+
+    ffmpeg -y -hide_banner -loglevel error "${input_args[@]}" \
+        -filter_complex "amix=inputs=${#non_vocals[@]}:duration=longest[out]" \
+        -map "[out]" -ac 1 -c:a pcm_f32le "${INPUT_DIR}/${BASENAME}_nonvocals.wav"  # <-- FORCE MONO HERE
+
+    [ -s "${INPUT_DIR}/${BASENAME}_nonvocals.wav" ] || { echo "Error: Non-vocal combination failed"; return 1; }
     echo "✓ Created: ${INPUT_DIR}/${BASENAME}_nonvocals.wav"
-fi
+}
+
+combine_nonvocals
 
 # --- Move vocals ---
-if [ -f "${OUTDIR}/vocals.wav" ]; then
+if [ -f "${OUTDIR}/vocals.wav" ] && [ -s "${OUTDIR}/vocals.wav" ]; then
     mv "${OUTDIR}/vocals.wav" "${INPUT_DIR}/${BASENAME}_vocals.wav"
     echo "✓ Created: ${INPUT_DIR}/${BASENAME}_vocals.wav"
+else
+    echo "Warning: Vocals file missing or empty."
 fi
 
 # --- Cleanup ---
@@ -151,5 +164,5 @@ echo "✓ Cleanup done"
 
 echo ">>> All done!"
 echo "Final files in: $INPUT_DIR"
-echo "  - ${BASENAME}_vocals.wav"
+[ -f "${INPUT_DIR}/${BASENAME}_vocals.wav" ] && echo "  - ${BASENAME}_vocals.wav"
 [ -f "${INPUT_DIR}/${BASENAME}_nonvocals.wav" ] && echo "  - ${BASENAME}_nonvocals.wav"
