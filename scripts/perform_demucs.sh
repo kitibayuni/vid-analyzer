@@ -2,43 +2,28 @@
 set -euo pipefail
 
 # --- CONFIG ---
-MODEL="htdemucs"     # or mdx_extra_q / mdx_q if you prefer lighter models
-SEGMENT_TIME=600     # seconds per chunk (10 minutes)
-OVERLAP=2            # seconds overlap between chunks
-STEMS=("vocals" "no_vocals")  # two-stems mode creates vocals and no_vocals
-# For 4-stem mode, use: STEMS=("vocals" "drums" "bass" "other")
-# and remove --two-stems=vocals from the demucs command
-# ---------------
+MODEL="htdemucs"            # Demucs model: htdemucs, mdx_extra_q, etc.
+SEGMENT_TIME=600            # seconds per chunk (10 minutes)
+OVERLAP=2                   # seconds overlap between chunks
+STEMS=("vocals" "no_vocals") # two-stems
+# ----------------
 
-# Advanced progress bar function
+# --- Advanced progress bar ---
 progress_bar() {
-    local current=$1
-    local total=$2
-    local task_name="${3:-Processing}"
-    local width=40
-    local percentage=$((current * 100 / total))
-    local filled=$((current * width / total))
-    
-    # Spinner characters
-    local spinner="/-\|"
-    local spin_char=${spinner:$((current % 4)):1}
-    
-    # Build the bar
+    local current=$1 total=$2 task_name="${3:-Processing}" width=40
+    local percentage=$((current*100/total))
+    local filled=$((current*width/total))
+    local spinner="/-\|" spin_char=${spinner:$((current%4)):1}
     local bar=""
-    for ((i=0; i<filled; i++)); do
-        bar+="█"
-    done
-    for ((i=filled; i<width; i++)); do
-        bar+="░"
-    done
-    
-    # Print without newline
+    for ((i=0;i<filled;i++)); do bar+="█"; done
+    for ((i=filled;i<width;i++)); do bar+="░"; done
     printf "\r%s [%s] %d%% (%d/%d) %s" "$spin_char" "$bar" "$percentage" "$current" "$total" "$task_name"
 }
 
+# --- Check input ---
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 input.wav"
-  exit 1
+    echo "Usage: $0 input.wav"
+    exit 1
 fi
 
 INPUT="$(realpath "$1")"
@@ -50,173 +35,103 @@ OUTDIR="${WORKDIR}/stitched"
 
 mkdir -p "$CHUNKS_DIR" "$OUTDIR"
 
-# Get duration in seconds
-DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-DURATION=${DURATION%.*} # round down to int
-
+# --- Split audio into chunks ---
+DURATION=$(ffprobe -v error -show_entries format=duration \
+    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
+DURATION=${DURATION%.*}
 echo ">>> Input length: ${DURATION}s"
-echo ">>> Splitting $INPUT into ${SEGMENT_TIME}s chunks with ${OVERLAP}s overlap..."
+TOTAL_CHUNKS=$(( (DURATION + SEGMENT_TIME - 1)/SEGMENT_TIME ))
 
-# Calculate total chunks for progress bar
-TOTAL_CHUNKS=$(( (DURATION + SEGMENT_TIME - 1) / SEGMENT_TIME ))
-
-start=0
-idx=0
+start=0 idx=0
 while [ $start -lt $DURATION ]; do
-  end=$((start + SEGMENT_TIME + OVERLAP))
-  if [ $end -gt $DURATION ]; then
-    end=$DURATION
-  fi
-  out=$(printf "%s/chunk_%03d.wav" "$CHUNKS_DIR" "$idx")
-  ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
-    -af "atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS" "$out"
-  
-  # Show progress
-  progress_bar $((idx + 1)) $TOTAL_CHUNKS "Splitting chunks"
-  
-  start=$((start + SEGMENT_TIME))
-  idx=$((idx + 1))
+    end=$((start + SEGMENT_TIME + OVERLAP))
+    [ $end -gt $DURATION ] && end=$DURATION
+    out=$(printf "%s/chunk_%03d.wav" "$CHUNKS_DIR" "$idx")
+    ffmpeg -hide_banner -loglevel error -y -i "$INPUT" \
+        -af "atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS" "$out"
+    progress_bar $((idx+1)) $TOTAL_CHUNKS "Splitting chunks"
+    start=$((start + SEGMENT_TIME))
+    idx=$((idx + 1))
 done
-echo ""  # New line after progress bar
+echo ""
 
+# --- Run Demucs on all chunks ---
 echo ">>> Running Demucs ($MODEL) on all chunks..."
 cd "$WORKDIR"
-demucs -n "$MODEL" --two-stems=vocals -d cuda chunks/chunk_*.wav
+demucs -n "$MODEL" --two-stems=vocals --float32 -d cuda chunks/chunk_*.wav
 cd - >/dev/null
 
-# Debug: List the separated directory structure
-echo ">>> Checking Demucs output structure..."
-find "${WORKDIR}/separated" -type f -name "*.wav" | head -5
-
-# Find the actual Demucs model output dir (handles htdemucs_6s etc.)
+# --- Locate Demucs output ---
 SEPDIR=$(find "${WORKDIR}/separated" -maxdepth 1 -type d -name "${MODEL}*" | head -n1)
-if [ -z "$SEPDIR" ]; then
-  echo "Error: Could not find Demucs output directory under ${WORKDIR}/separated/"
-  exit 1
-fi
+[ -z "$SEPDIR" ] && { echo "Error: Could not find Demucs output"; exit 1; }
 
-echo ">>> Found separated files in: $SEPDIR"
+# --- Collect all chunk files for each stem ---
+declare -A STEM_CHUNKS
+for stem in "${STEMS[@]}"; do
+    STEM_CHUNKS["$stem"]=( )
+done
 
-# Function to stitch stems with crossfade and progress bar
-stitch_stem () {
-  local stem="$1"
-  echo ">>> Stitching stem: $stem"
-  
-  local chunk_files=( $(ls "${CHUNKS_DIR}"/chunk_*.wav | sort) )
-  local inputs=()
-  for f in "${chunk_files[@]}"; do
-    name=$(basename "$f" .wav)
-    # Check if the stem file exists in the expected location
-    stem_file="${SEPDIR}/${name}/${stem}.wav"
-    if [ -f "$stem_file" ]; then
-      inputs+=("$stem_file")
-    else
-      echo "Warning: Missing stem file: $stem_file"
+for chunk_dir in "${SEPDIR}"/chunk_*; do
+    for stem in "${STEMS[@]}"; do
+        stem_file="${chunk_dir}/${stem}.wav"
+        [ -f "$stem_file" ] && STEM_CHUNKS["$stem"]+=( "$stem_file" )
+    done
+done
+
+# --- Stitch function with crossfade ---
+stitch_stem() {
+    local stem="$1"
+    local inputs=( "${STEM_CHUNKS[$stem][@]}" )
+    [ ${#inputs[@]} -eq 0 ] && { echo "Error: No $stem files found"; return 1; }
+
+    echo ">>> Stitching stem: $stem"
+    if [ ${#inputs[@]} -eq 1 ]; then
+        ffmpeg -hide_banner -loglevel error -y -i "${inputs[0]}" -ac 1 -c:a pcm_f32le "${OUTDIR}/${stem}.wav"
+        return
     fi
-  done
-  
-  if [ ${#inputs[@]} -eq 0 ]; then
-    echo "Error: No $stem files found for stitching!"
-    return 1
-  fi
 
-  if [[ ${#inputs[@]} -eq 1 ]]; then
-    cp "${inputs[0]}" "${OUTDIR}/${stem}.wav"
-    echo ">>> Only one chunk, copied directly"
-    return
-  fi
+    tmp="${OUTDIR}/${stem}_tmp0.wav"
+    ffmpeg -hide_banner -loglevel error -y -i "${inputs[0]}" -ac 1 -c:a pcm_f32le "$tmp"
 
-  tmp="${OUTDIR}/${stem}_tmp0.wav"
-  cp "${inputs[0]}" "$tmp"
-  part_idx=1
-  
-  # Progress tracking for crossfade operations
-  total_operations=$((${#inputs[@]} - 1))
-  
-  for ((i=1; i<${#inputs[@]}; i++)); do
-    next="${inputs[i]}"
-    outtmp="${OUTDIR}/${stem}_tmp${part_idx}.wav"
-    
-    progress_bar $i $total_operations "Crossfading $stem"
-    
-    ffmpeg -hide_banner -loglevel error -y -i "$tmp" -i "$next" \
-      -filter_complex "acrossfade=d=${OVERLAP}:c1=tri:c2=tri" \
-      -c:a pcm_s16le "$outtmp"
-    rm -f "$tmp"
-    tmp="$outtmp"
-    ((part_idx++))
-  done
-  echo ""  # New line after progress bar
-  
-  mv "$tmp" "${OUTDIR}/${stem}.wav"
-  echo ">>> Completed stitching $stem"
+    total_ops=$((${#inputs[@]}-1))
+    for ((i=1;i<${#inputs[@]};i++)); do
+        next="${inputs[i]}"
+        outtmp="${OUTDIR}/${stem}_tmp${i}.wav"
+        progress_bar $i $total_ops "Crossfading $stem"
+        ffmpeg -hide_banner -loglevel error -y -i "$tmp" -i "$next" \
+            -filter_complex "acrossfade=d=${OVERLAP}:c1=tri:c2=tri" \
+            -ac 1 -c:a pcm_f32le "$outtmp"
+        rm -f "$tmp"
+        tmp="$outtmp"
+    done
+    echo ""
+    mv "$tmp" "${OUTDIR}/${stem}.wav"
 }
 
-# Process all stems
+# --- Process all stems ---
 for stem in "${STEMS[@]}"; do
-  stitch_stem "$stem"
+    stitch_stem "$stem"
 done
 
-# Collect all non-vocal stems for concatenation
-echo ">>> Collecting non-vocal stems..."
-non_vocal_files=()
+# --- Combine all non-vocal stems ---
+echo ">>> Combining non-vocal stems..."
+non_vocals=()
 for stem in "${STEMS[@]}"; do
-  if [ "$stem" != "vocals" ]; then
-    if [ -f "${OUTDIR}/${stem}.wav" ]; then
-      non_vocal_files+=("${OUTDIR}/${stem}.wav")
-      echo ">>> Found non-vocal stem: ${OUTDIR}/${stem}.wav"
-    fi
-  fi
+    [ "$stem" != "vocals" ] && [ -f "${OUTDIR}/${stem}.wav" ] && non_vocals+=("${OUTDIR}/${stem}.wav")
 done
 
-echo ">>> Moving final files to original directory with proper naming..."
-
-# Move vocals file with proper naming
-if [ -f "${OUTDIR}/vocals.wav" ]; then
-  mv "${OUTDIR}/vocals.wav" "${INPUT_DIR}/${BASENAME}_vocals.wav"
-  echo "✓ Created: ${INPUT_DIR}/${BASENAME}_vocals.wav"
+if [ ${#non_vocals[@]} -gt 0 ]; then
+    ffmpeg -hide_banner -loglevel error -y $(printf -- '-i %q ' "${non_vocals[@]}") \
+        -filter_complex "amix=inputs=${#non_vocals[@]}:duration=longest[out]" \
+        -map "[out]" -ac 1 -c:a pcm_f32le "${INPUT_DIR}/${BASENAME}_nonvocals.wav"
+    echo "✓ Created: ${INPUT_DIR}/${BASENAME}_nonvocals.wav"
 fi
 
-# Handle non-vocal stems
-if [ ${#non_vocal_files[@]} -gt 1 ]; then
-  echo ">>> Combining multiple non-vocal stems..."
-  
-  # Create filter complex for mixing multiple non-vocal stems
-  filter_inputs=""
-  filter_mix=""
-  for ((i=0; i<${#non_vocal_files[@]}; i++)); do
-    filter_inputs+=" -i \"${non_vocal_files[i]}\""
-    if [ $i -eq 0 ]; then
-      filter_mix="[0:a]"
-    else
-      filter_mix+="[${i}:a]"
-    fi
-  done
-  filter_mix+="amix=inputs=${#non_vocal_files[@]}:duration=longest[out]"
-  
-  eval ffmpeg -hide_banner -loglevel error -y $filter_inputs \
-    -filter_complex "\"$filter_mix\"" -map "[out]" \
-    "\"${INPUT_DIR}/${BASENAME}_nonvocals.wav\""
-  
-  echo "✓ Created: ${INPUT_DIR}/${BASENAME}_nonvocals.wav"
-  
-elif [ ${#non_vocal_files[@]} -eq 1 ]; then
-  # Only one non-vocal stem, just move it
-  mv "${non_vocal_files[0]}" "${INPUT_DIR}/${BASENAME}_nonvocals.wav"
-  echo "✓ Created: ${INPUT_DIR}/${BASENAME}_nonvocals.wav"
-else
-  echo ">>> No non-vocal stems found to process"
-fi
+# --- Move vocals ---
+[ -f "${OUTDIR}/vocals.wav" ] && mv "${OUTDIR}/vocals.wav" "${INPUT_DIR}/${BASENAME}_vocals.wav" && \
+    echo "✓ Created: ${INPUT_DIR}/${BASENAME}_vocals.wav"
 
-# Clean up work directory
-echo ">>> Cleaning up temporary files..."
+# --- Cleanup ---
 rm -rf "$WORKDIR"
-echo "✓ Temporary work directory removed"
-
-echo ""
-echo ">>> All done!"
-echo "Final files created in: $INPUT_DIR"
-echo "  - ${BASENAME}_vocals.wav"
-if [ ${#non_vocal_files[@]} -gt 0 ]; then
-  echo "  - ${BASENAME}_nonvocals.wav"
-fi
+echo "✓ Cleanup done"
+echo ">>> All done! Final files in $INPUT_DIR"
