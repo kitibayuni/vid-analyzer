@@ -17,11 +17,6 @@ if [ -z "$INPUT" ]; then
     exit 1
 fi
 
-echo "Processing input file: $INPUT"
-echo "Output basename: $BASENAME"
-echo "Output directory: $OUTDIR"
-echo ""
-
 if [ ! -f "$INPUT" ]; then
     echo "ERROR: Input file not found: $INPUT"
     exit 1
@@ -65,8 +60,7 @@ else
             elif [[ $LINE =~ silence_end ]] && [[ -n "$START" ]]; then
                 END=$(echo "$LINE" | awk '{print $5}')
                 SILENCE_DURATION=$(echo "$END - $START" | bc 2>/dev/null)
-                SILENCE_DURATION=${SILENCE_DURATION:-0}
-                TOTAL_SILENCE=$(echo "$TOTAL_SILENCE + $SILENCE_DURATION" | bc)
+                TOTAL_SILENCE=$(echo "$TOTAL_SILENCE + ${SILENCE_DURATION:-0}" | bc)
                 SILENCE_COUNT=$((SILENCE_COUNT + 1))
                 START=""
             fi
@@ -76,36 +70,22 @@ else
             -show_entries stream=duration -of csv=p=0 "$INPUT")
         DURATION=${DURATION%.*}
         DURATION=${DURATION:-1}
-
         SILENCE_FRAC=$(echo "$TOTAL_SILENCE / $DURATION" | bc -l)
         SILENCE_FRAC=${SILENCE_FRAC:-0}
 
         echo "Silence: ${SILENCE_COUNT} segments, $(echo "$SILENCE_FRAC * 100" | bc -l | cut -d. -f1)%"
 
-        # Only export if <90% silent
         if (( $(echo "$SILENCE_FRAC < 0.9" | bc -l) )); then
             echo "Exporting non-silent audio stream to $OUTFILE"
-            ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -ac 1 -c:a pcm_f32le "$OUTFILE"
-            if [ $? -ne 0 ]; then
-                echo "✗ Failed to export audio stream $STREAM_INDEX"
-                continue
-            fi
+            ffmpeg -y -i "$INPUT" -map 0:a:$STREAM_INDEX -ar 48000 -ac 1 -c:a pcm_f32le "$OUTFILE" || continue
 
             # --- Demucs processing ---
             echo "Running Demucs on $OUTFILE..."
-            ./perform_demucs.sh "$OUTFILE"
-            if [ $? -ne 0 ]; then
-                echo "✗ Demucs failed for $OUTFILE"
-                continue
-            fi
+            ./perform_demucs.sh "$OUTFILE" || continue
 
             DEMUCS_FILES=("${OUTDIR}/${BASENAME}_audio${STREAM_INDEX}_vocals.wav" "${OUTDIR}/${BASENAME}_audio${STREAM_INDEX}_nonvocals.wav")
             for DEMUCS_FILE in "${DEMUCS_FILES[@]}"; do
-                if [ ! -f "$DEMUCS_FILE" ]; then
-                    echo "✗ Expected Demucs output not found: $DEMUCS_FILE"
-                    continue
-                fi
-
+                [ ! -f "$DEMUCS_FILE" ] && { echo "✗ Missing Demucs output: $DEMUCS_FILE"; continue; }
                 BASE_DEMUCS=$(basename "$DEMUCS_FILE" .wav)
                 echo "Creating 3 variants for $DEMUCS_FILE"
 
@@ -117,7 +97,13 @@ else
                 ffmpeg -y -i "$DEMUCS_FILE" -ar 22050 -c:a pcm_s16le "${OUTDIR}/${BASE_DEMUCS}_22k_16bit.wav"
 
                 echo "✓ Variants created for $DEMUCS_FILE"
+
+                # --- Delete original Demucs file after variants ---
+                rm -f "$DEMUCS_FILE"
             done
+
+            # --- Delete the extracted audio once Demucs variants exist ---
+            rm -f "$OUTFILE"
         else
             echo "Skipping mostly silent audio stream $STREAM_INDEX"
         fi
@@ -141,6 +127,10 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
         echo "✓ Video stream re-encoded to $OUTFILE"
     done
 fi
+
+# --- Delete original input after audio/video extraction ---
+rm -f "$INPUT"
+echo "✓ Original input file deleted: $INPUT"
 
 echo "=== PROCESSING COMPLETE ==="
 echo "Finished at: $(date)"
