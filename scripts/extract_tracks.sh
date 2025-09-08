@@ -128,10 +128,6 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
     done
 fi
 
-# --- Delete original input after audio/video extraction ---
-rm -f "$INPUT"
-echo "✓ Original input file deleted: $INPUT"
-
 echo "=== PROCESSING COMPLETE ==="
 echo "Finished at: $(date)"
 echo "All output files saved to: $OUTDIR"
