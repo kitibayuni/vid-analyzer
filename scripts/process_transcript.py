@@ -29,7 +29,7 @@ def export_csv(transcript, output_file, interval=0.2):
 
 def main(input_file, output_file, model_size):
     model = stable_whisper.load_model(model_size)
-    result = model.transcribe(input_file, word_timestamps=True)  # <-- key flag
+    result = model.transcribe(input_file, word_timestamps=True, language="en")
     export_csv(result.to_dict(), output_file)
 
 if __name__ == "__main__":

@@ -124,7 +124,7 @@ else
                     # Convert .npy to .csv and delete .npy
                     EMO_CSV="${OUTDIR}/${BASE_DEMUCS}_emotions.csv"
                     echo "Processing emotions .npy -> $EMO_CSV"
-                    python process_emotions.py "$EMO_OUT" "$EMO_CSV" --chunk_sec 5 && rm -f "$EMO_OUT"
+                    python process_emotion.py "$EMO_OUT" "$EMO_CSV" --chunk_sec 5 && rm -f "$EMO_OUT"
                 fi
 
                 # --- Delete original Demucs file after variants ---
