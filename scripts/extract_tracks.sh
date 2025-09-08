@@ -2,6 +2,9 @@
 # usage: ./extract_tracks.sh input.mp4
 # requires: ffmpeg, ffprobe, ./perform_demucs.sh
 
+# source the venv
+source venv/bin/activate
+
 ARG="$1"
 INPUT="$(dirname "$0")/$ARG"
 BASENAME=$(basename "$INPUT" | sed 's/\.[^.]*$//')
@@ -90,13 +93,24 @@ else
                 echo "Creating 3 variants for $DEMUCS_FILE"
 
                 # Variant 1: 16 kHz 16-bit
-                ffmpeg -y -i "$DEMUCS_FILE" -ar 16000 -c:a pcm_s16le "${OUTDIR}/${BASE_DEMUCS}_16k_16bit.wav"
+                OUT16="${OUTDIR}/${BASE_DEMUCS}_16k_16bit.wav"
+                ffmpeg -y -i "$DEMUCS_FILE" -ar 16000 -c:a pcm_s16le "$OUT16"
+
                 # Variant 2: 44.1 kHz 32-bit float
                 ffmpeg -y -i "$DEMUCS_FILE" -ar 44100 -c:a pcm_f32le "${OUTDIR}/${BASE_DEMUCS}_44k_32bit.wav"
+
                 # Variant 3: 22.05 kHz 16-bit
                 ffmpeg -y -i "$DEMUCS_FILE" -ar 22050 -c:a pcm_s16le "${OUTDIR}/${BASE_DEMUCS}_22k_16bit.wav"
 
                 echo "✓ Variants created for $DEMUCS_FILE"
+
+                # --- Transcript only for VOCALS 16k16bit ---
+                if [[ "$BASE_DEMUCS" == *"_vocals" ]]; then
+                    echo "Running transcript on $OUT16"
+                    ./process_transcript.py "$OUT16" \
+                        --model small \
+                        --output "${OUTDIR}/${BASE_DEMUCS}_transcript.csv"
+                fi
 
                 # --- Delete original Demucs file after variants ---
                 rm -f "$DEMUCS_FILE"
@@ -131,3 +145,5 @@ fi
 echo "=== PROCESSING COMPLETE ==="
 echo "Finished at: $(date)"
 echo "All output files saved to: $OUTDIR"
+
+deactivate
