@@ -1,22 +1,18 @@
-use std::fs::File;
-use std::io::BufReader;
-use claxon::FlacReader;
+use hound::{WavReader, SampleFormat};
 use csv::Writer;
 use pyin::{Framing, PadMode, PYINExecutor};
 use rayon::prelude::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Input FLAC file: {}", input_path);
+    println!("Input WAV file: {}", input_path);
     println!("Output CSV file: {}", output_path);
 
-    // --- OPEN FLAC ---
-    let file = File::open(input_path)?;
-    let reader = BufReader::new(file);
-    let mut flac = FlacReader::new(reader)?;
-
-    let samplerate = flac.streaminfo().sample_rate as usize;
-    let channels = flac.streaminfo().channels as usize;
+    // --- OPEN WAV ---
+    let mut reader = WavReader::open(input_path)?;
+    let spec = reader.spec();
+    let samplerate = spec.sample_rate as usize;
+    let channels = spec.channels as usize;
     println!("Sample rate: {} Hz, {} channel(s)", samplerate, channels);
 
     // --- PYIN PARAMETERS ---
@@ -37,11 +33,9 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     // --- MULTIPROGRESS ---
     let m = MultiProgress::new();
 
-    // Global status bar
     let status_bar = m.add(ProgressBar::new(1));
     status_bar.set_style(ProgressStyle::default_bar().template("{msg}").unwrap());
 
-    // Overall channel progress
     let channel_bar = m.add(ProgressBar::new(channels as u64));
     channel_bar.set_style(
         ProgressStyle::default_bar()
@@ -52,14 +46,24 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
 
     // --- LOAD SAMPLES INTO CHANNEL BUFFERS ---
     status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
-    let total_samples = flac.streaminfo().samples.unwrap_or(0) as usize;
-    let mut channel_buffers: Vec<Vec<f64>> =
-        vec![Vec::with_capacity(total_samples / channels.max(1)); channels];
+    let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
 
-    for (i, sample) in flac.samples().enumerate() {
-        let s = sample?;
-        let chan = i % channels;
-        channel_buffers[chan].push(s as f64 / i32::MAX as f64);
+    match spec.sample_format {
+        SampleFormat::Int => {
+            let max_val = 2f64.powi(spec.bits_per_sample as i32 - 1) - 1.0;
+            for (i, sample) in reader.samples::<i32>().enumerate() {
+                let s = sample? as f64 / max_val;
+                let chan = i % channels;
+                channel_buffers[chan].push(s);
+            }
+        }
+        SampleFormat::Float => {
+            for (i, sample) in reader.samples::<f32>().enumerate() {
+                let s = sample? as f64;
+                let chan = i % channels;
+                channel_buffers[chan].push(s);
+            }
+        }
     }
 
     // --- CSV SETUP ---
@@ -82,7 +86,6 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
             continue;
         }
 
-        // --- PREPROCESS BAR ---
         let total_chunks = (samples.len() + chunk_samples - 1) / chunk_samples;
         let total_preprocess_steps = samples.len() + total_chunks;
         status_bar.set_message(format!("[ == PRE-PROCESSING CHANNEL {} == ]", chan_idx + 1));
@@ -97,26 +100,22 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
                 .progress_chars("|  "),
         );
 
-        // Step 1: normalize / touch memory
         let mut normalized_samples: Vec<f64> = Vec::with_capacity(samples.len());
         for &s in samples.iter() {
             normalized_samples.push(s);
             preprocess_bar.inc(1);
         }
 
-        // Step 2: generate chunk indices
-        status_bar.set_message("[ == COPYING MEMORY & PREPARING SLICES == ]");
         let mut chunk_indices = Vec::with_capacity(total_chunks);
         let mut start = 0;
         while start < normalized_samples.len() {
             let end = (start + chunk_samples + overlap_samples).min(normalized_samples.len());
-            chunk_indices.push((start, end)); // only store indices
+            chunk_indices.push((start, end));
             preprocess_bar.inc(1);
             start += chunk_samples;
         }
         preprocess_bar.finish_with_message(format!("Channel {} pre-processed", chan_idx + 1));
 
-        // --- CHUNK PROCESS BAR ---
         status_bar.set_message(format!(
             "[ == PROCESSING CHUNKS W/ PYIN CHANNEL {} == ]",
             chan_idx + 1
@@ -132,7 +131,6 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
                 .progress_chars("|  "),
         );
 
-        // --- PARALLEL PYIN PROCESSING ---
         let results: Vec<Vec<(f64, Option<f64>)>> = chunk_indices
             .par_iter()
             .map(|(start, end)| {
