@@ -1,20 +1,16 @@
-use std::fs::File;
-use std::io::BufReader;
-use claxon::FlacReader;
+use hound;
 use csv::Writer;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Input FLAC file: {}", input_path);
+    println!("Input WAV file: {}", input_path);
     println!("Output CSV file: {}", output_path);
 
-    // --- OPEN FLAC ---
-    let file = File::open(input_path)?;
-    let reader = BufReader::new(file);
-    let mut flac = FlacReader::new(reader)?;
-
-    let samplerate = flac.streaminfo().sample_rate as usize;
-    let channels = flac.streaminfo().channels as usize;
+    // --- OPEN WAV ---
+    let reader = hound::WavReader::open(input_path)?;
+    let spec = reader.spec();
+    let samplerate = spec.sample_rate as usize;
+    let channels = spec.channels as usize;
     println!("Sample rate: {} Hz, {} channel(s)", samplerate, channels);
 
     // --- FRAME PARAMETERS ---
@@ -28,11 +24,9 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
 
     // --- LOAD SAMPLES INTO CHANNEL BUFFERS ---
     status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
-    let total_samples = flac.streaminfo().samples.unwrap_or(0) as usize;
-    let mut channel_buffers: Vec<Vec<f64>> =
-        vec![Vec::with_capacity(total_samples / channels.max(1)); channels];
+    let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
 
-    for (i, sample) in flac.samples().enumerate() {
+    for (i, sample) in reader.into_samples::<i32>().enumerate() {
         let s = sample?;
         let chan = i % channels;
         channel_buffers[chan].push(s as f64 / i32::MAX as f64);
@@ -74,6 +68,7 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
             row.push(format!("{:.6}", rms));
             row.push(format!("{:.6}", energy));
         }
+
         writer.write_record(&row)?;
     }
 
