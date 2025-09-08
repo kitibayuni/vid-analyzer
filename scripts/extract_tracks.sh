@@ -110,15 +110,21 @@ else
 
                 # --- Transcript and emotion preprocessing only for VOCALS 16k16bit ---
                 if [[ "$BASE_DEMUCS" == *"_vocals" ]]; then
+                    # Transcript
                     echo "Running transcript on $OUT16"
                     python process_transcript.py "$OUT16" \
                         --model small \
                         --output "${OUTDIR}/${BASE_DEMUCS}_transcript.csv"
 
-                    # Emotion preprocessing
+                    # Emotion preprocessing -> .npy
                     EMO_OUT="${OUTDIR}/${BASE_DEMUCS}_emotions.npy"
                     echo "Running emotion preprocessing on $OUT16 -> $EMO_OUT"
                     ./pre-process_emotions "$OUT16" "$EMO_OUT" 16000
+
+                    # Convert .npy to .csv and delete .npy
+                    EMO_CSV="${OUTDIR}/${BASE_DEMUCS}_emotions.csv"
+                    echo "Processing emotions .npy -> $EMO_CSV"
+                    python process_emotions.py "$EMO_OUT" "$EMO_CSV" --chunk_sec 5 && rm -f "$EMO_OUT"
                 fi
 
                 # --- Delete original Demucs file after variants ---
