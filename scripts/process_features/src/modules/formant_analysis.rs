@@ -1,28 +1,25 @@
-use std::fs::File;
-use std::io::BufReader;
-use claxon::FlacReader;
+use hound;
 use csv::Writer;
 use rayon::prelude::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 // Simple formant detection using Linear Predictive Coding (LPC) approach
-// This is a simplified implementation - for production use, consider more sophisticated methods
 fn find_formants(samples: &[f64], sample_rate: usize) -> Vec<f64> {
     if samples.len() < 512 {
         return Vec::new();
     }
-    
+
     // Apply pre-emphasis filter
     let mut pre_emphasized: Vec<f64> = Vec::with_capacity(samples.len());
     pre_emphasized.push(samples[0]);
     for i in 1..samples.len() {
         pre_emphasized.push(samples[i] - 0.97 * samples[i - 1]);
     }
-    
+
     // Simple autocorrelation-based formant estimation
     let window_size = 1024.min(pre_emphasized.len());
     let mut autocorr = vec![0.0; window_size / 2];
-    
+
     for lag in 0..autocorr.len() {
         let mut sum = 0.0;
         for i in 0..(window_size - lag) {
@@ -32,12 +29,12 @@ fn find_formants(samples: &[f64], sample_rate: usize) -> Vec<f64> {
         }
         autocorr[lag] = sum;
     }
-    
-    // Find peaks in autocorrelation (simplified formant detection)
+
+    // Find peaks in autocorrelation
     let mut formants = Vec::new();
     let min_formant_samples = sample_rate / 3000; // ~300 Hz minimum
     let max_formant_samples = sample_rate / 200;  // ~200 Hz maximum for F1
-    
+
     for i in min_formant_samples..max_formant_samples.min(autocorr.len() - 1) {
         if autocorr[i] > autocorr[i - 1] && autocorr[i] > autocorr[i + 1] && autocorr[i] > 0.1 * autocorr[0] {
             let formant_freq = sample_rate as f64 / i as f64;
@@ -46,7 +43,7 @@ fn find_formants(samples: &[f64], sample_rate: usize) -> Vec<f64> {
             }
         }
     }
-    
+
     // Sort and return up to 4 formants
     formants.sort_by(|a, b| a.partial_cmp(b).unwrap());
     formants.truncate(4);
@@ -54,22 +51,20 @@ fn find_formants(samples: &[f64], sample_rate: usize) -> Vec<f64> {
 }
 
 pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Input FLAC file: {}", input_path);
+    println!("Input WAV file: {}", input_path);
     println!("Output CSV file: {}", output_path);
 
-    // --- OPEN FLAC ---
-    let file = File::open(input_path)?;
-    let reader = BufReader::new(file);
-    let mut flac = FlacReader::new(reader)?;
-
-    let samplerate = flac.streaminfo().sample_rate as usize;
-    let channels = flac.streaminfo().channels as usize;
+    // --- OPEN WAV ---
+    let reader = hound::WavReader::open(input_path)?;
+    let spec = reader.spec();
+    let samplerate = spec.sample_rate as usize;
+    let channels = spec.channels as usize;
     println!("Sample rate: {} Hz, {} channel(s)", samplerate, channels);
 
     // --- FORMANT ANALYSIS PARAMETERS ---
     let frame_len = (0.025 * samplerate as f64) as usize; // 25ms frames
-    let hop_len = (0.010 * samplerate as f64) as usize;   // 10ms hop (15ms overlap)
-    
+    let hop_len = (0.010 * samplerate as f64) as usize;   // 10ms hop
+
     // --- CHUNK PARAMETERS ---
     let chunk_sec = 5.0;
     let chunk_samples = (chunk_sec * samplerate as f64) as usize;
@@ -78,7 +73,7 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
         "Chunking: {:.1}s chunks ({} samples) with {} sample overlap",
         chunk_sec, chunk_samples, overlap_samples
     );
-    println!("Frame length: {} samples ({:.1}ms), Hop length: {} samples ({:.1}ms)\n", 
+    println!("Frame length: {} samples ({:.1}ms), Hop length: {} samples ({:.1}ms)\n",
              frame_len, frame_len as f64 * 1000.0 / samplerate as f64,
              hop_len, hop_len as f64 * 1000.0 / samplerate as f64);
 
@@ -100,11 +95,9 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
 
     // --- LOAD SAMPLES INTO CHANNEL BUFFERS ---
     status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
-    let total_samples = flac.streaminfo().samples.unwrap_or(0) as usize;
-    let mut channel_buffers: Vec<Vec<f64>> =
-        vec![Vec::with_capacity(total_samples / channels.max(1)); channels];
+    let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
 
-    for (i, sample) in flac.samples().enumerate() {
+    for (i, sample) in reader.into_samples::<i32>().enumerate() {
         let s = sample?;
         let chan = i % channels;
         channel_buffers[chan].push(s as f64 / i32::MAX as f64);
@@ -191,24 +184,24 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
             .map(|(start, end)| {
                 let chunk = &normalized_samples[*start..*end];
                 let mut chunk_results = Vec::new();
-                
+
                 // Process frames within this chunk
                 let mut frame_start = 0;
                 while frame_start + frame_len <= chunk.len() {
                     let frame_end = frame_start + frame_len;
                     let frame = &chunk[frame_start..frame_end];
-                    
+
                     // Calculate global time for this frame
                     let global_frame_start = *start + frame_start;
                     let global_time = global_frame_start as f64 / samplerate as f64;
-                    
+
                     // Find formants for this frame
                     let formants = find_formants(frame, samplerate);
                     chunk_results.push((global_time, formants));
-                    
+
                     frame_start += hop_len;
                 }
-                
+
                 chunk_bar.inc(1);
                 chunk_results
             })
@@ -229,7 +222,7 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     let max_len = channel_results.iter().map(|v| v.len()).max().unwrap_or(0);
     for i in 0..max_len {
         let mut row: Vec<String> = Vec::with_capacity(channels * 4 + 1);
-        
+
         // Get time from first available channel
         let time_sec = channel_results
             .iter()
@@ -239,7 +232,6 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
         // Add formant data for each channel
         for chan in &channel_results {
             if let Some((_, formants)) = chan.get(i) {
-                // Ensure we always output 4 formant columns per channel
                 for f_idx in 0..4 {
                     if f_idx < formants.len() {
                         row.push(format!("{:.2}", formants[f_idx]));
@@ -248,7 +240,6 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
                     }
                 }
             } else {
-                // No data for this frame - fill with empty strings
                 for _ in 0..4 {
                     row.push("".to_string());
                 }
