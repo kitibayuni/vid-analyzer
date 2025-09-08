@@ -13,14 +13,14 @@ use modules::{rms_energy, pitch, spectral_features, jitter_shimmer, formant_anal
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
     eprintln!("Usage:");
-    eprintln!("  {} --rms-in <input.flac> --rms-out <output.csv>", prog_name);
-    eprintln!("  {} --pitch-in <input.flac> --pitch-out <output.csv>", prog_name);
-    eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv>", prog_name);
-    eprintln!("  {} --jitter-in <input.flac> --jitter-out <output.csv>", prog_name);
-    eprintln!("  {} --formant-in <input.flac> --formant-out <output.csv>", prog_name);
-    eprintln!("  {} --rms-in <rms_input.flac> --rms-out <rms_output.csv> --pitch-in <pitch_input.flac> --pitch-out <pitch_output.csv>", prog_name);
-    eprintln!("  {} --spectral-in <input.flac> --spectral-out <output.csv> --jitter-in <input.flac> --jitter-out <output.csv>", prog_name);
-    eprintln!("  {} --formant-in <input.flac> --formant-out <output.csv> --pitch-in <input.flac> --pitch-out <output.csv>", prog_name);
+    eprintln!("  {} --rms-in <input.wav> --rms-out <output.csv>", prog_name);
+    eprintln!("  {} --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
+    eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv>", prog_name);
+    eprintln!("  {} --jitter-in <input.wav> --jitter-out <output.csv>", prog_name);
+    eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv>", prog_name);
+    eprintln!("  {} --rms-in <rms_input.wav> --rms-out <rms_output.csv> --pitch-in <pitch_input.wav> --pitch-out <pitch_output.csv>", prog_name);
+    eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv> --jitter-in <input.wav> --jitter-out <output.csv>", prog_name);
+    eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv> --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
     eprintln!("");
     eprintln!("Features:");
     eprintln!("  --rms-*       : RMS energy and total energy analysis");
@@ -29,6 +29,7 @@ fn print_usage() {
     eprintln!("  --jitter-*    : Jitter, shimmer, and harmonics-to-noise ratio analysis");
     eprintln!("  --formant-*   : Formant frequency analysis (F1, F2, F3, F4)");
 }
+
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
