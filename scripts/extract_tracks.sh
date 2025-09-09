@@ -151,9 +151,20 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
     for STREAM_INDEX in $(seq 0 $((NUM_VIDEO_STREAMS - 1))); do
         echo "--- Processing Video Stream $STREAM_INDEX ---"
         OUTFILE="$OUTDIR/${BASENAME}_video${STREAM_INDEX}.mp4"
+        SALIENCE_OUT="${OUTDIR}/${BASENAME}_video${STREAM_INDEX}_salience.csv"
+
+        # Re-encode the video stream
         ffmpeg -y -i "$INPUT" -map 0:v:$STREAM_INDEX -an -vf "fps=15,scale=224:224" \
             -c:v libx264 -preset fast -crf 16 "$OUTFILE"
         echo "✓ Video stream re-encoded to $OUTFILE"
+
+        # Run DeepGaze salience extraction
+        echo "Running DeepGaze on $OUTFILE -> $SALIENCE_OUT"
+        python deepgaze.py "$OUTFILE" "$SALIENCE_OUT"
+
+        # Cleanup: remove the re-encoded video file
+        rm -f "$OUTFILE"
+        echo "✓ Cleaned up $OUTFILE"
     done
 fi
 
