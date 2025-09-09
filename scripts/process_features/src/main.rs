@@ -6,9 +6,11 @@ mod modules {
     pub mod spectral_features;
     pub mod jitter_shimmer;
     pub mod formant_analysis;
+    pub mod zcr;
 }
 
-use modules::{rms_energy, pitch, spectral_features, jitter_shimmer, formant_analysis};
+use modules::{rms_energy, pitch, spectral_features, jitter_shimmer, formant_analysis, zcr};
+
 
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
@@ -16,6 +18,7 @@ fn print_usage() {
     eprintln!("  {} --rms-in <input.wav> --rms-out <output.csv>", prog_name);
     eprintln!("  {} --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
     eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv>", prog_name);
+    eprintln!("  {} --zcr-in <input.wav> --zcr-out <output.csv>", prog_name);
     eprintln!("  {} --jitter-in <input.wav> --jitter-out <output.csv>", prog_name);
     eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv>", prog_name);
     eprintln!("  {} --rms-in <rms_input.wav> --rms-out <rms_output.csv> --pitch-in <pitch_input.wav> --pitch-out <pitch_output.csv>", prog_name);
@@ -25,7 +28,8 @@ fn print_usage() {
     eprintln!("Features:");
     eprintln!("  --rms-*       : RMS energy and total energy analysis");
     eprintln!("  --pitch-*     : Pitch detection and analysis");
-    eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, flux, zero-crossing rate)");
+    eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, flux)");
+    eprintln!("  --zcr-*       : Zero-crossing rate analysis");
     eprintln!("  --jitter-*    : Jitter, shimmer, and harmonics-to-noise ratio analysis");
     eprintln!("  --formant-*   : Formant frequency analysis (F1, F2, F3, F4)");
 }
@@ -45,6 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pitch_output: Option<String> = None;
     let mut spectral_input: Option<String> = None;
     let mut spectral_output: Option<String> = None;
+    let mut zcr_input: Option<String> = None;
+    let mut zcr_output: Option<String> = None;
     let mut jitter_input: Option<String> = None;
     let mut jitter_output: Option<String> = None;
     let mut formant_input: Option<String> = None;
@@ -92,6 +98,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
                 spectral_input = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--zcr-in" => {
+                if i + 1 >= args.len() { eprintln!("Error: --zcr-in requires a file path"); std::process::exit(1); }
+                zcr_input = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--zcr-out" => {
+                if i + 1 >= args.len() { eprintln!("Error: --zcr-out requires a file path"); std::process::exit(1); }
+                zcr_output = Some(args[i + 1].clone());
                 i += 2;
             }
             "--spectral-out" => {
@@ -146,6 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_rms = rms_input.is_some() || rms_output.is_some();
     let run_pitch = pitch_input.is_some() || pitch_output.is_some();
     let run_spectral = spectral_input.is_some() || spectral_output.is_some();
+    let run_zcr = zcr_input.is_some() || zcr_output.is_some();
     let run_jitter = jitter_input.is_some() || jitter_output.is_some();
     let run_formant = formant_input.is_some() || formant_output.is_some();
 
@@ -161,6 +178,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if run_spectral && (spectral_input.is_none() || spectral_output.is_none()) {
         eprintln!("Error: Both --spectral-in and --spectral-out are required for spectral processing");
+        std::process::exit(1);
+    }
+
+    if run_zcr && (zcr_input.is_none() || zcr_output.is_none()) {
+        eprintln!("Error: Both --zcr-in and --zcr-out are required for ZCR processing");
         std::process::exit(1);
     }
 
@@ -195,6 +217,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("=== Running Spectral Features Analysis ===");
         spectral_features::process(&spectral_input.unwrap(), &spectral_output.unwrap())?;
     }
+
+    if run_zcr {
+        println!("=== Running Zero-Crossing Rate Analysis ===");
+        zcr::process(&zcr_input.unwrap(), &zcr_output.unwrap())?;
+    }
+
 
     if run_jitter {
         println!("=== Running Jitter/Shimmer Analysis ===");

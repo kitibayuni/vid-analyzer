@@ -16,23 +16,20 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
 
     // --- FRAME PARAMETERS ---
     let frame_len = (0.025 * samplerate as f64) as usize; // 25ms frames
-    let fft_size = frame_len.next_power_of_two(); // FFT size (power of 2)
-    println!("Calculating spectral features using {}-sample frames (~25ms), FFT size: {}", frame_len, fft_size);
+    let fft_size = frame_len.next_power_of_two();
+    println!(
+        "Calculating spectral features using {}-sample frames (~25ms), FFT size: {}",
+        frame_len, fft_size
+    );
+
+    // --- LOAD SAMPLES INTO CHANNEL BUFFERS ---
+    let channel_buffers = load_samples(&reader, &spec, channels)?;
 
     // --- MULTIPROGRESS ---
     let m = MultiProgress::new();
-    let status_bar = m.add(ProgressBar::new(1));
+    let status_bar = m.add(ProgressBar::new(channel_buffers[0].len() as u64));
     status_bar.set_style(ProgressStyle::default_bar().template("{msg}").unwrap());
-
-    // --- LOAD SAMPLES INTO CHANNEL BUFFERS ---
-    status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
-    let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
-
-    for (i, sample) in reader.into_samples::<i32>().enumerate() {
-        let s = sample?;
-        let chan = i % channels;
-        channel_buffers[chan].push(s as f64 / i32::MAX as f64);
-    }
+    status_bar.set_message("[ == CALCULATING SPECTRAL FEATURES == ]");
 
     // --- FFT SETUP ---
     let mut planner = FftPlanner::new();
@@ -42,82 +39,88 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     let mut writer = Writer::from_path(output_path)?;
     let mut headers = vec!["time_sec".to_string()];
     for c in 0..channels {
-        headers.push(format!("chan{}_spectral_centroid", c + 1));
-        headers.push(format!("chan{}_spectral_rolloff", c + 1));
-        headers.push(format!("chan{}_spectral_bandwidth", c + 1));
-        headers.push(format!("chan{}_spectral_flatness", c + 1));
-        headers.push(format!("chan{}_spectral_flux", c + 1));
-        headers.push(format!("chan{}_zero_crossing_rate", c + 1));
+        headers.extend_from_slice(&[
+            format!("chan{}_spectral_centroid", c + 1),
+            format!("chan{}_spectral_rolloff", c + 1),
+            format!("chan{}_spectral_bandwidth", c + 1),
+            format!("chan{}_spectral_flatness", c + 1),
+            format!("chan{}_spectral_flux", c + 1),
+            format!("chan{}_zero_crossing_rate", c + 1),
+        ]);
     }
     writer.write_record(&headers)?;
 
-    // --- CALCULATE SPECTRAL FEATURES PER CHANNEL ---
-    status_bar.set_message("[ == CALCULATING SPECTRAL FEATURES == ]");
+    // --- FEATURE CALCULATION ---
     let max_len = channel_buffers.iter().map(|v| v.len()).max().unwrap_or(0);
-    let frame_hop = frame_len; // non-overlapping frames
-
-    // Store previous magnitude spectra for spectral flux calculation
     let mut prev_magnitude_spectra: Vec<Option<Vec<f64>>> = vec![None; channels];
 
-    for start in (0..max_len).step_by(frame_hop) {
+    for start in (0..max_len).step_by(frame_len) {
         let time_sec = start as f64 / samplerate as f64;
-        let mut row: Vec<String> = vec![format!("{:.4}", time_sec)];
+        let mut row = vec![format!("{:.4}", time_sec)];
 
         for (chan_idx, chan) in channel_buffers.iter().enumerate() {
-            if start >= chan.len() {
-                for _ in 0..6 {
-                    row.push("".to_string());
-                }
+            let frame = get_frame(chan, start, frame_len);
+
+            if frame.is_empty() {
+                row.extend_from_slice(&vec!["".to_string(); 6]);
                 continue;
             }
 
-            let end = (start + frame_len).min(chan.len());
-            let frame = &chan[start..end];
+            let magnitude_spectrum = compute_fft_spectrum(frame, fft_size, &fft);
+            row.push(format!("{:.2}", calculate_spectral_centroid(&magnitude_spectrum, samplerate)));
+            row.push(format!("{:.2}", calculate_spectral_rolloff(&magnitude_spectrum, samplerate, 0.85)));
+            row.push(format!("{:.2}", calculate_spectral_bandwidth(&magnitude_spectrum, samplerate)));
+            row.push(format!("{:.6}", calculate_spectral_flatness(&magnitude_spectrum)));
+            row.push(format!("{:.6}", calculate_spectral_flux(&magnitude_spectrum, &prev_magnitude_spectra[chan_idx])));
+            row.push(format!("{:.6}", calculate_zero_crossing_rate(frame)));
 
-            // Prepare FFT input (pad with zeros if necessary)
-            let mut fft_input: Vec<Complex<f64>> = frame.iter()
-                .map(|&x| Complex::new(x, 0.0))
-                .collect();
-            fft_input.resize(fft_size, Complex::new(0.0, 0.0));
-
-            // Apply window (Hamming)
-            apply_hamming_window(&mut fft_input);
-
-            // Perform FFT
-            fft.process(&mut fft_input);
-
-            // Calculate magnitude spectrum
-            let magnitude_spectrum: Vec<f64> = fft_input[0..fft_size/2]
-                .iter()
-                .map(|c| c.norm())
-                .collect();
-
-            // Calculate spectral features
-            let spectral_centroid = calculate_spectral_centroid(&magnitude_spectrum, samplerate);
-            let spectral_rolloff = calculate_spectral_rolloff(&magnitude_spectrum, samplerate, 0.85);
-            let spectral_bandwidth = calculate_spectral_bandwidth(&magnitude_spectrum, samplerate, spectral_centroid);
-            let spectral_flatness = calculate_spectral_flatness(&magnitude_spectrum);
-            let spectral_flux = calculate_spectral_flux(&magnitude_spectrum, &prev_magnitude_spectra[chan_idx]);
-            let zero_crossing_rate = calculate_zero_crossing_rate(frame);
-
-            row.push(format!("{:.2}", spectral_centroid));
-            row.push(format!("{:.2}", spectral_rolloff));
-            row.push(format!("{:.2}", spectral_bandwidth));
-            row.push(format!("{:.6}", spectral_flatness));
-            row.push(format!("{:.6}", spectral_flux));
-            row.push(format!("{:.6}", zero_crossing_rate));
-
-            // Store current magnitude spectrum for next iteration
             prev_magnitude_spectra[chan_idx] = Some(magnitude_spectrum);
         }
 
         writer.write_record(&row)?;
+        status_bar.inc(frame_len as u64);
     }
 
     writer.flush()?;
     status_bar.finish_with_message("[ == SPECTRAL FEATURES CSV COMPLETE == ]");
     println!("Done. Output saved to {}", output_path);
+
     Ok(())
+}
+
+// --- HELPERS ---
+
+fn load_samples(reader: &hound::WavReader<std::io::BufReader<std::fs::File>>, spec: &hound::WavSpec, channels: usize) -> Result<Vec<Vec<f64>>, Box<dyn std::error::Error>> {
+    let mut channel_buffers = vec![Vec::new(); channels];
+    match spec.sample_format {
+        hound::SampleFormat::Int => {
+            let max_val = 2f64.powi(spec.bits_per_sample as i32 - 1) - 1.0;
+            for (i, sample) in reader.clone().into_samples::<i32>().enumerate() {
+                let s = sample? as f64 / max_val;
+                channel_buffers[i % channels].push(s);
+            }
+        }
+        hound::SampleFormat::Float => {
+            for (i, sample) in reader.clone().into_samples::<f32>().enumerate() {
+                let s = sample? as f64;
+                channel_buffers[i % channels].push(s);
+            }
+        }
+    }
+    Ok(channel_buffers)
+}
+
+fn get_frame(channel: &[f64], start: usize, frame_len: usize) -> &[f64] {
+    let end = (start + frame_len).min(channel.len());
+    &channel[start..end]
+}
+
+fn compute_fft_spectrum(frame: &[f64], fft_size: usize, fft: &rustfft::Fft<f64>) -> Vec<f64> {
+    let mut fft_input: Vec<Complex<f64>> = frame.iter().map(|&x| Complex::new(x, 0.0)).collect();
+    fft_input.resize(fft_size, Complex::new(0.0, 0.0));
+    apply_hamming_window(&mut fft_input);
+    fft.process(&mut fft_input);
+    fft_input[..fft_size / 2].iter().map(|c| c.norm()).collect()
 }
 
 fn apply_hamming_window(samples: &mut [Complex<f64>]) {
@@ -152,23 +155,20 @@ fn calculate_spectral_rolloff(magnitude_spectrum: &[f64], sample_rate: usize, ro
     sample_rate as f64 / 2.0
 }
 
-fn calculate_spectral_bandwidth(magnitude_spectrum: &[f64], sample_rate: usize, centroid: f64) -> f64 {
+fn calculate_spectral_bandwidth(magnitude_spectrum: &[f64], sample_rate: usize) -> f64 {
+    let centroid = calculate_spectral_centroid(magnitude_spectrum, sample_rate);
     let mut weighted_variance = 0.0;
     let mut magnitude_sum = 0.0;
     for (i, &m) in magnitude_spectrum.iter().enumerate() {
         let freq = i as f64 * sample_rate as f64 / (2.0 * magnitude_spectrum.len() as f64);
-        let diff = freq - centroid;
-        weighted_variance += diff * diff * m;
+        weighted_variance += (freq - centroid).powi(2) * m;
         magnitude_sum += m;
     }
     if magnitude_sum > 0.0 { (weighted_variance / magnitude_sum).sqrt() } else { 0.0 }
 }
 
 fn calculate_spectral_flatness(magnitude_spectrum: &[f64]) -> f64 {
-    let geometric_mean = magnitude_spectrum.iter()
-        .filter(|&&x| x > 0.0)
-        .map(|&x| x.ln())
-        .sum::<f64>() / magnitude_spectrum.len() as f64;
+    let geometric_mean = magnitude_spectrum.iter().filter(|&&x| x > 0.0).map(|&x| x.ln()).sum::<f64>() / magnitude_spectrum.len() as f64;
     let arithmetic_mean = magnitude_spectrum.iter().sum::<f64>() / magnitude_spectrum.len() as f64;
     if arithmetic_mean > 0.0 { geometric_mean.exp() / arithmetic_mean } else { 0.0 }
 }
@@ -177,12 +177,7 @@ fn calculate_spectral_flux(current_spectrum: &[f64], prev_spectrum: &Option<Vec<
     match prev_spectrum {
         Some(prev) => {
             if prev.len() != current_spectrum.len() { return 0.0; }
-            let mut flux = 0.0;
-            for (c, p) in current_spectrum.iter().zip(prev.iter()) {
-                let diff = c - p;
-                flux += diff * diff;
-            }
-            flux.sqrt()
+            current_spectrum.iter().zip(prev.iter()).map(|(c, p)| (c - p).powi(2)).sum::<f64>().sqrt()
         },
         None => 0.0
     }
@@ -190,9 +185,6 @@ fn calculate_spectral_flux(current_spectrum: &[f64], prev_spectrum: &Option<Vec<
 
 fn calculate_zero_crossing_rate(frame: &[f64]) -> f64 {
     if frame.len() < 2 { return 0.0; }
-    let mut crossings = 0;
-    for i in 1..frame.len() {
-        if (frame[i] >= 0.0) != (frame[i-1] >= 0.0) { crossings += 1; }
-    }
+    let crossings = frame.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count();
     crossings as f64 / (frame.len() - 1) as f64
 }
