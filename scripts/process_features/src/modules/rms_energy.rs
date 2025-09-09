@@ -26,11 +26,12 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
     let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
 
-    for (i, sample) in reader.into_samples::<i32>().enumerate() {
+    for (i, sample) in reader.into_samples::<i16>().enumerate() {
         let s = sample?;
         let chan = i % channels;
-        channel_buffers[chan].push(s as f64 / i32::MAX as f64);
+        channel_buffers[chan].push(s as f64 / i16::MAX as f64);
     }
+
 
     // --- CSV SETUP ---
     let mut writer = Writer::from_path(output_path)?;
