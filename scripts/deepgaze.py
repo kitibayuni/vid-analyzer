@@ -13,7 +13,7 @@ print("DeepGazeIIE imported successfully")
 ##########
 ## ARGS ##
 ##########
-parser = argparse.ArgumentParser(description="Extract motion, optical flow, and saliency features using DeepGaze IIE")
+parser = argparse.ArgumentParser(description="Extract motion, saliency, and attention features using DeepGaze IIE")
 parser.add_argument("input_video", type=str, help="Path to input video file")
 parser.add_argument("output_csv", type=str, help="Path to output CSV file")
 parser.add_argument("--frame_size", type=int, nargs=2, default=(224, 224), help="Frame size for model input (width height)")
@@ -52,22 +52,25 @@ print(f"Video: {total_frames} frames @ {fps:.2f} FPS ({duration:.2f} seconds)")
 ## HELPER FUNCTIONS ##
 ######################
 def calculate_saliency_features(saliency_map):
-    """Calculate comprehensive saliency features from a probability map"""
+    """Calculate saliency and attention features from a probability map"""
     if len(saliency_map.shape) > 2:
         saliency_map = saliency_map.squeeze()
 
+    # Saliency features
     mean_sal = float(np.mean(saliency_map))
     max_sal = float(np.max(saliency_map))
-    std_sal = float(np.std(saliency_map))
-
+    
+    # Saliency entropy
     epsilon = 1e-10
     sal_norm = saliency_map + epsilon
     sal_norm = sal_norm / np.sum(sal_norm)
     entropy = -np.sum(sal_norm * np.log2(sal_norm))
 
+    # Attention features
     h, w = saliency_map.shape
     y_coords, x_coords = np.mgrid[0:h, 0:w]
     total_mass = np.sum(saliency_map)
+    
     if total_mass > 0:
         center_y = np.sum(y_coords * saliency_map) / total_mass / h
         center_x = np.sum(x_coords * saliency_map) / total_mass / w
@@ -79,30 +82,19 @@ def calculate_saliency_features(saliency_map):
         center_y = center_x = 0.5
         concentration = 0.0
 
-    threshold_90 = np.percentile(saliency_map, 90)
-    top_10_percent_mass = np.sum(saliency_map[saliency_map >= threshold_90]) / total_mass if total_mass > 0 else 0.0
-
     return {
         'mean_saliency': mean_sal,
         'max_saliency': max_sal,
-        'std_saliency': std_sal,
         'saliency_entropy': entropy,
         'attention_center_x': center_x,
         'attention_center_y': center_y,
-        'attention_concentration': concentration,
-        'top10_saliency_mass': top_10_percent_mass
+        'attention_concentration': concentration
     }
-
-def smooth_series(data, window_frames):
-    """Apply moving average smoothing"""
-    if window_frames <= 1:
-        return data
-    return pd.Series(data).rolling(window=window_frames, center=True, min_periods=1).mean().values
 
 ####################
 ## PROCESS VIDEO  ##
 ####################
-saliency_features = []
+features_data = []
 prev_gray = None
 frames_batch = []
 
@@ -118,30 +110,16 @@ with tqdm(total=total_frames, desc="Processing Video") as pbar:
         frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         frames_batch.append(frame_rgb)
 
-        # Grayscale frame for motion / optical flow
+        # Grayscale frame for motion analysis
         gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
 
+        # Motion features
         if prev_gray is not None:
-            # --- Frame-difference motion ---
             diff = cv2.absdiff(gray, prev_gray)
             motion_intensity = float(np.mean(diff)) / 255.0
             motion_variance = float(np.std(diff)) / 255.0
-
-            # --- Dense Optical Flow (Farneback) ---
-            flow = cv2.calcOpticalFlowFarneback(prev_gray, gray,
-                                                None,
-                                                0.5, 3, 15, 3, 5, 1.2, 0)
-            mag, ang = cv2.cartToPolar(flow[...,0], flow[...,1], angleInDegrees=True)
-
-            flow_magnitude_mean = float(np.mean(mag))
-            flow_magnitude_std = float(np.std(mag))
-            flow_angle_mean = float(np.mean(ang))
-            flow_angle_std = float(np.std(ang))
-
         else:
             motion_intensity = motion_variance = 0.0
-            flow_magnitude_mean = flow_magnitude_std = 0.0
-            flow_angle_mean = flow_angle_std = 0.0
 
         prev_gray = gray
 
@@ -151,22 +129,18 @@ with tqdm(total=total_frames, desc="Processing Video") as pbar:
             "frame_idx": frame_idx,
             "motion_intensity": motion_intensity,
             "motion_variance": motion_variance,
-            "flow_magnitude_mean": flow_magnitude_mean,
-            "flow_magnitude_std": flow_magnitude_std,
-            "flow_angle_mean": flow_angle_mean,
-            "flow_angle_std": flow_angle_std
+            # Initialize saliency and attention features
+            "mean_saliency": 0.0,
+            "max_saliency": 0.0,
+            "saliency_entropy": 0.0,
+            "attention_center_x": 0.5,
+            "attention_center_y": 0.5,
+            "attention_concentration": 0.0
         }
 
-        # Initialize saliency features
-        saliency_keys = ['mean_saliency', 'max_saliency', 'std_saliency', 'saliency_entropy',
-                        'attention_center_x', 'attention_center_y', 'attention_concentration', 
-                        'top10_saliency_mass']
-        for key in saliency_keys:
-            frame_data[key] = 0.0
+        features_data.append(frame_data)
 
-        saliency_features.append(frame_data)
-
-        # Batch inference
+        # Batch inference for saliency
         if len(frames_batch) == BATCH_SIZE or frame_idx == total_frames - 1:
             batch_tensor = torch.from_numpy(np.array(frames_batch)).permute(0, 3, 1, 2).float() / 255.0
             batch_tensor = batch_tensor.to(DEVICE)
@@ -183,12 +157,12 @@ with tqdm(total=total_frames, desc="Processing Video") as pbar:
                 ).view(batch_size, channels, h, w)
                 saliency_maps = saliency_probs.cpu().numpy()
 
+            # Update features with saliency data
             for i, sal_map in enumerate(saliency_maps):
                 sal_map_2d = sal_map[0]
                 sal_features = calculate_saliency_features(sal_map_2d)
                 idx = frame_idx - len(frames_batch) + 1 + i
-                for key, value in sal_features.items():
-                    saliency_features[idx][key] = value
+                features_data[idx].update(sal_features)
 
             frames_batch = []
 
@@ -200,20 +174,11 @@ cap.release()
 #################################
 ## POST-PROCESSING & SMOOTHING ##
 #################################
-print("Post-processing and smoothing features...")
+print("Computing derived features...")
 
-df = pd.DataFrame(saliency_features)
-window_frames = max(1, int(fps * WINDOW_SEC))
-print(f"Applying {WINDOW_SEC}s smoothing window ({window_frames} frames)")
+df = pd.DataFrame(features_data)
 
-smooth_columns = ['motion_intensity', 'motion_variance', 'mean_saliency', 'max_saliency', 
-                  'std_saliency', 'attention_concentration', 'top10_saliency_mass',
-                  'flow_magnitude_mean', 'flow_magnitude_std', 'flow_angle_mean', 'flow_angle_std']
-
-for col in smooth_columns:
-    if col in df.columns:
-        df[f'{col}_smooth'] = smooth_series(df[col].values, window_frames)
-
+# Calculate change rates (derivatives)
 df['motion_change_rate'] = df['motion_intensity'].diff().fillna(0)
 df['saliency_change_rate'] = df['mean_saliency'].diff().fillna(0)
 df['attention_shift_rate'] = np.sqrt(
@@ -221,34 +186,40 @@ df['attention_shift_rate'] = np.sqrt(
     df['attention_center_y'].diff().fillna(0)**2
 )
 
-df['is_high_motion'] = df['motion_intensity_smooth'] > df['motion_intensity_smooth'].quantile(0.75)
-df['is_high_saliency'] = df['mean_saliency_smooth'] > df['mean_saliency_smooth'].quantile(0.75)
-df['is_focused_attention'] = df['attention_concentration'] > df['attention_concentration'].quantile(0.75)
+# Final column order - only the requested features plus time
+final_columns = [
+    'time_sec', 
+    'frame_idx',
+    # Motion features
+    'motion_intensity', 
+    'motion_variance', 
+    'motion_change_rate',
+    # Saliency features  
+    'mean_saliency', 
+    'max_saliency', 
+    'saliency_entropy', 
+    'saliency_change_rate',
+    # Attention features
+    'attention_center_x', 
+    'attention_center_y', 
+    'attention_concentration', 
+    'attention_shift_rate'
+]
 
-column_order = ['time_sec', 'frame_idx', 
-                'motion_intensity', 'motion_intensity_smooth', 'motion_variance', 'motion_change_rate',
-                'flow_magnitude_mean', 'flow_magnitude_std', 'flow_angle_mean', 'flow_angle_std',
-                'mean_saliency', 'mean_saliency_smooth', 'max_saliency', 'std_saliency',
-                'saliency_entropy', 'saliency_change_rate',
-                'attention_center_x', 'attention_center_y', 'attention_concentration', 
-                'attention_shift_rate', 'top10_saliency_mass',
-                'is_high_motion', 'is_high_saliency', 'is_focused_attention']
+df = df[final_columns]
 
-remaining_cols = [col for col in df.columns if col not in column_order]
-column_order.extend(remaining_cols)
-df = df[column_order]
-
+# Round numerical values
 numerical_cols = df.select_dtypes(include=[np.number]).columns
 df[numerical_cols] = df[numerical_cols].round(6)
 
+# Save to CSV
 df.to_csv(OUTPUT_CSV, index=False)
 
 print(f"\n✅ Features saved to {OUTPUT_CSV}")
 print(f"📊 Analysis Summary:")
 print(f"   Total frames: {len(df)}")
 print(f"   Duration: {duration:.2f} seconds")
-print(f"   Average motion intensity: {df['motion_intensity'].mean():.4f}")
-print(f"   Average saliency: {df['mean_saliency'].mean():.4f}")
-print(f"   High motion frames: {df['is_high_motion'].sum()} ({df['is_high_motion'].mean()*100:.1f}%)")
-print(f"   High saliency frames: {df['is_high_saliency'].sum()} ({df['is_high_saliency'].mean()*100:.1f}%)")
+print(f"   Motion intensity range: {df['motion_intensity'].min():.4f} - {df['motion_intensity'].max():.4f}")
+print(f"   Saliency range: {df['mean_saliency'].min():.4f} - {df['mean_saliency'].max():.4f}")
 print(f"   Attention concentration range: {df['attention_concentration'].min():.3f} - {df['attention_concentration'].max():.3f}")
+print(f"\n📋 Output columns: {', '.join(final_columns)}")
