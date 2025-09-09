@@ -1,8 +1,8 @@
 #!/bin/bash
 # usage: ./extract_tracks.sh input.mp4
-# requires: ffmpeg, ffprobe, ./perform_demucs.sh, ./pre-process_emotions
+# requires: ffmpeg, ffprobe, ./perform_demucs.sh, ./pre-process_emotions, ./process_feature
 
-# source the venv
+# --- Source virtual environment ---
 source venv/bin/activate
 
 ARG="$1"
@@ -34,6 +34,23 @@ fi
 echo "✓ Input file exists"
 echo "✓ Output directory exists"
 echo ""
+
+# --- Helper function to run process_feature ---
+run_process() {
+    local infile="$1"
+    local outbase="$2"
+    local feature="$3"
+
+    case "$feature" in
+        rms)       ./process_feature --rms-in "$infile" --rms-out "${outbase}_rms.csv" ;;
+        pitch)     ./process_feature --pitch-in "$infile" --pitch-out "${outbase}_pitch.csv" ;;
+        spectral)  ./process_feature --spectral-in "$infile" --spectral-out "${outbase}_spectral.csv" ;;
+        zcr)       ./process_feature --zcr-in "$infile" --zcr-out "${outbase}_zcr.csv" ;;
+        formant)   ./process_feature --formant-in "$infile" --formant-out "${outbase}_formant.csv" ;;
+        jitter)    ./process_feature --jitter-in "$infile" --jitter-out "${outbase}_jitter.csv" ;;
+        *) echo "Unknown feature: $feature" ;;
+    esac
+}
 
 # --- Audio track extraction ---
 echo "=== AUDIO TRACK PROCESSING ==="
@@ -86,49 +103,44 @@ else
             echo "Running Demucs on $OUTFILE..."
             ./perform_demucs.sh "$OUTFILE" || continue
 
-            DEMUCS_FILES=("${OUTDIR}/${BASENAME}_audio${STREAM_INDEX}_vocals.wav" "${OUTDIR}/${BASENAME}_audio${STREAM_INDEX}_nonvocals.wav")
+            DEMUCS_FILES=("${OUTDIR}/${BASENAME}_audio${STREAM_INDEX}_vocals.wav" \
+                          "${OUTDIR}/${BASENAME}_audio${STREAM_INDEX}_nonvocals.wav")
+
             for DEMUCS_FILE in "${DEMUCS_FILES[@]}"; do
                 [ ! -f "$DEMUCS_FILE" ] && { echo "✗ Missing Demucs output: $DEMUCS_FILE"; continue; }
                 BASE_DEMUCS=$(basename "$DEMUCS_FILE" .wav)
                 echo "Creating 3 variants for $DEMUCS_FILE"
 
-                # Define output variables
-                OUT16="${OUTDIR}/${BASE_DEMUCS}_16k_16bit.wav"
-                OUT44="${OUTDIR}/${BASE_DEMUCS}_44k_32bit.wav"
-                OUT22="${OUTDIR}/${BASE_DEMUCS}_22k_16bit.wav"
+                # --- Create audio variants ---
+                OUT16="$OUTDIR/${BASE_DEMUCS}_16k_16bit.wav"
+                OUT44="$OUTDIR/${BASE_DEMUCS}_44k_32bit.wav"
+                OUT22="$OUTDIR/${BASE_DEMUCS}_22k_16bit.wav"
 
-                # Variant 1: 16 kHz 16-bit
                 ffmpeg -y -i "$DEMUCS_FILE" -ar 16000 -c:a pcm_s16le "$OUT16"
-
-                # Variant 2: 44.1 kHz 32-bit float
                 ffmpeg -y -i "$DEMUCS_FILE" -ar 44100 -c:a pcm_f32le "$OUT44"
-
-                # Variant 3: 22.05 kHz 16-bit
                 ffmpeg -y -i "$DEMUCS_FILE" -ar 22050 -c:a pcm_s16le "$OUT22"
 
                 echo "✓ Variants created for $DEMUCS_FILE"
 
-                # --- Transcript and emotion preprocessing only for VOCALS 16k16bit ---
+                # --- Process features for VOCALS ---
                 if [[ "$BASE_DEMUCS" == *"_vocals" ]]; then
-                    # Transcript
-                    echo "Running transcript on $OUT16"
-                    python process_transcript.py "$OUT16" \
-                        --model small \
-                        --output "${OUTDIR}/${BASE_DEMUCS}_transcript.csv"
-
-                    # Emotion preprocessing -> .npy
-                    EMO_OUT="${OUTDIR}/${BASE_DEMUCS}_emotions.npy"
-                    echo "Running emotion preprocessing on $OUT16 -> $EMO_OUT"
-                    ./pre-process_emotions "$OUT16" "$EMO_OUT" 16000
-
-                    # Convert .npy to .csv and delete .npy
-                    EMO_CSV="${OUTDIR}/${BASE_DEMUCS}_emotions.csv"
-                    echo "Processing emotions .npy -> $EMO_CSV"
-                    python process_emotion.py "$EMO_OUT" "$EMO_CSV" --chunk_sec 5 && rm -f "$EMO_OUT"
+                    echo "Processing features for $BASE_DEMUCS (vocals)..."
+                    run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" rms
+                    run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" zcr
+                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" pitch
+                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" formant
+                    run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" spectral
+                    run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" jitter
+                else
+                    # --- Process features for NONVOCALS ---
+                    echo "Processing features for $BASE_DEMUCS (nonvocals)..."
+                    run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" rms
+                    run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" zcr
+                    run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" spectral
                 fi
 
-                # --- Delete original Demucs file after variants ---
-                rm -f "$DEMUCS_FILE"
+                # --- Delete all intermediate WAVs ---
+                rm -f "$DEMUCS_FILE" "$OUT16" "$OUT22" "$OUT44"
             done
 
             # --- Delete the extracted audio once Demucs variants exist ---
@@ -151,9 +163,9 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
     for STREAM_INDEX in $(seq 0 $((NUM_VIDEO_STREAMS - 1))); do
         echo "--- Processing Video Stream $STREAM_INDEX ---"
         OUTFILE="$OUTDIR/${BASENAME}_video${STREAM_INDEX}.mp4"
-        SALIENCE_OUT="${OUTDIR}/${BASENAME}_video${STREAM_INDEX}_salience.csv"
+        SALIENCE_OUT="$OUTDIR/${BASENAME}_video${STREAM_INDEX}_salience.csv"
 
-        # Re-encode the video stream
+        # Re-encode video
         ffmpeg -y -i "$INPUT" -map 0:v:$STREAM_INDEX -an -vf "fps=15,scale=224:224" \
             -c:v libx264 -preset fast -crf 16 "$OUTFILE"
         echo "✓ Video stream re-encoded to $OUTFILE"
@@ -162,7 +174,7 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
         echo "Running DeepGaze on $OUTFILE -> $SALIENCE_OUT"
         python deepgaze.py "$OUTFILE" "$SALIENCE_OUT"
 
-        # Cleanup: remove the re-encoded video file
+        # Cleanup
         rm -f "$OUTFILE"
         echo "✓ Cleaned up $OUTFILE"
     done
