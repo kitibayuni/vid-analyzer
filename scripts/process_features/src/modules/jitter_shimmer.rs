@@ -1,4 +1,4 @@
-use hound;
+use hound::{SampleFormat, WavReader};
 use csv::Writer;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -33,10 +33,47 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     status_bar.set_message("[ == SLICING DATA INTO CHANNEL BUFFERS == ]");
     let mut channel_buffers: Vec<Vec<f64>> = vec![Vec::new(); channels];
 
-    for (i, sample) in reader.into_samples::<i32>().enumerate() {
-        let s = sample?;
-        let chan = i % channels;
-        channel_buffers[chan].push(s as f64 / i32::MAX as f64);
+    match spec.sample_format {
+        SampleFormat::Int => {
+            match spec.bits_per_sample {
+                16 => {
+                    for (i, sample) in reader.into_samples::<i16>().enumerate() {
+                        let s = sample?;
+                        let chan = i % channels;
+                        channel_buffers[chan].push(s as f64 / i16::MAX as f64);
+                    }
+                }
+                24 => {
+                    // hound doesn’t directly expose i24, so read as i32 and shift
+                    for (i, sample) in reader.into_samples::<i32>().enumerate() {
+                        let s = sample?;
+                        let s24 = (s >> 8) as f64; // drop lowest 8 bits
+                        let chan = i % channels;
+                        channel_buffers[chan].push(s24 / 8_388_607.0); // 2^23 - 1
+                    }
+                }
+                32 => {
+                    for (i, sample) in reader.into_samples::<i32>().enumerate() {
+                        let s = sample?;
+                        let chan = i % channels;
+                        channel_buffers[chan].push(s as f64 / i32::MAX as f64);
+                    }
+                }
+                other => {
+                    return Err(format!("Unsupported integer bit depth: {} bits", other).into());
+                }
+            }
+        }
+        SampleFormat::Float => {
+            if spec.bits_per_sample != 32 {
+                return Err(format!("Unsupported float bit depth: {} bits", spec.bits_per_sample).into());
+            }
+            for (i, sample) in reader.into_samples::<f32>().enumerate() {
+                let s = sample?;
+                let chan = i % channels;
+                channel_buffers[chan].push(s as f64); // already normalized [-1.0, 1.0]
+            }
+        }
     }
 
     // --- CSV SETUP ---
