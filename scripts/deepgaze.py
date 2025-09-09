@@ -188,8 +188,7 @@ df['attention_shift_rate'] = np.sqrt(
 
 # Final column order - only the requested features plus time
 final_columns = [
-    'time_sec', 
-    'frame_idx',
+    'time_sec',
     # Motion features
     'motion_intensity', 
     'motion_variance', 
