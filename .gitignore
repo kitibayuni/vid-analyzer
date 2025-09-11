@@ -9,6 +9,7 @@ scripts/pre-process_hubert/target/*
 scripts/process_formants/target/*
 scripts/process_rms_energy/target/*
 scripts/process_pitch/target/*
+scripts/process_salience/target/*
 example.flac
 example1.flac
 scripts/data_visualization/venv/*
