@@ -167,7 +167,7 @@ else
                     # --- Process transcript for 16kHz 16-bit vocals ---
                     echo "Processing transcript for $BASE_DEMUCS (vocals)..."
                     TRANSCRIPT_OUT="$OUTDIR/${BASE_DEMUCS}_transcript.csv"
-                    python process_transcript.py "$OUT16" "$TRANSCRIPT_OUT"
+                    python process_transcript.py "$OUT16" --output "$TRANSCRIPT_OUT"
                     echo "✓ Transcript processed: $TRANSCRIPT_OUT"
                 else
                     # --- Process features for NONVOCALS ---
