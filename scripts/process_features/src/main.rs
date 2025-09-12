@@ -2,14 +2,13 @@ use std::env;
 
 mod modules {
     pub mod rms_energy;
-    pub mod pitch;
+    pub mod pitch_jitshim;
     pub mod spectral_features;
-    pub mod jitter_shimmer;
     pub mod formant_analysis;
     pub mod zcr;
 }
 
-use modules::{rms_energy, pitch, spectral_features, jitter_shimmer, formant_analysis, zcr};
+use modules::{rms_energy, pitch_jitshim, spectral_features, formant_analysis, zcr};
 
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
@@ -18,21 +17,19 @@ fn print_usage() {
     eprintln!("  {} --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
     eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv>", prog_name);
     eprintln!("  {} --zcr-in <input.wav> --zcr-out <output.csv>", prog_name);
-    eprintln!("  {} --jitter-in <input.wav> --jitter-out <output.csv>", prog_name);
     eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv>", prog_name);
     eprintln!("  {} --rms-in <rms_input.wav> --rms-out <rms_output.csv> \\
                   --pitch-in <pitch_input.wav> --pitch-out <pitch_output.csv>", prog_name);
     eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv> \\
-                  --jitter-in <input.wav> --jitter-out <output.csv>", prog_name);
+                  --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
     eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv> \\
                   --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
     eprintln!();
     eprintln!("Features:");
     eprintln!("  --rms-*       : RMS energy and total energy analysis");
-    eprintln!("  --pitch-*     : Pitch detection and analysis");
+    eprintln!("  --pitch-*     : Integrated pitch, jitter, shimmer, and HNR analysis");
     eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, flux)");
     eprintln!("  --zcr-*       : Zero-crossing rate analysis");
-    eprintln!("  --jitter-*    : Jitter, shimmer, and harmonics-to-noise ratio analysis");
     eprintln!("  --formant-*   : Formant frequency analysis (F1, F2, F3, F4)");
 }
 
@@ -52,8 +49,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut spectral_output: Option<String> = None;
     let mut zcr_input: Option<String> = None;
     let mut zcr_output: Option<String> = None;
-    let mut jitter_input: Option<String> = None;
-    let mut jitter_output: Option<String> = None;
     let mut formant_input: Option<String> = None;
     let mut formant_output: Option<String> = None;
 
@@ -69,8 +64,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--spectral-out" => { spectral_output = args.get(i + 1).cloned(); i += 2; }
             "--zcr-in" => { zcr_input = args.get(i + 1).cloned(); i += 2; }
             "--zcr-out" => { zcr_output = args.get(i + 1).cloned(); i += 2; }
-            "--jitter-in" => { jitter_input = args.get(i + 1).cloned(); i += 2; }
-            "--jitter-out" => { jitter_output = args.get(i + 1).cloned(); i += 2; }
             "--formant-in" => { formant_input = args.get(i + 1).cloned(); i += 2; }
             "--formant-out" => { formant_output = args.get(i + 1).cloned(); i += 2; }
             _ => {
@@ -86,7 +79,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_pitch = pitch_input.is_some() || pitch_output.is_some();
     let run_spectral = spectral_input.is_some() || spectral_output.is_some();
     let run_zcr = zcr_input.is_some() || zcr_output.is_some();
-    let run_jitter = jitter_input.is_some() || jitter_output.is_some();
     let run_formant = formant_input.is_some() || formant_output.is_some();
 
     if run_rms && (rms_input.is_none() || rms_output.is_none()) {
@@ -94,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     if run_pitch && (pitch_input.is_none() || pitch_output.is_none()) {
-        eprintln!("Error: Both --pitch-in and --pitch-out are required for pitch processing");
+        eprintln!("Error: Both --pitch-in and --pitch-out are required for pitch/jitter/shimmer processing");
         std::process::exit(1);
     }
     if run_spectral && (spectral_input.is_none() || spectral_output.is_none()) {
@@ -105,16 +97,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Error: Both --zcr-in and --zcr-out are required for ZCR processing");
         std::process::exit(1);
     }
-    if run_jitter && (jitter_input.is_none() || jitter_output.is_none()) {
-        eprintln!("Error: Both --jitter-in and --jitter-out are required for jitter/shimmer processing");
-        std::process::exit(1);
-    }
     if run_formant && (formant_input.is_none() || formant_output.is_none()) {
         eprintln!("Error: Both --formant-in and --formant-out are required for formant processing");
         std::process::exit(1);
     }
 
-    if !run_rms && !run_pitch && !run_spectral && !run_zcr && !run_jitter && !run_formant {
+    if !run_rms && !run_pitch && !run_spectral && !run_zcr && !run_formant {
         eprintln!("Error: No processing specified");
         print_usage();
         std::process::exit(1);
@@ -126,8 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rms_energy::process(&rms_input.unwrap(), &rms_output.unwrap())?;
     }
     if run_pitch {
-        println!("=== Running Pitch Analysis ===");
-        pitch::process(&pitch_input.unwrap(), &pitch_output.unwrap())?;
+        println!("=== Running Integrated Pitch/Jitter/Shimmer Analysis ===");
+        pitch_jitshim::process(&pitch_input.unwrap(), &pitch_output.unwrap())?;
     }
     if run_spectral {
         println!("=== Running Spectral Features Analysis ===");
@@ -136,10 +124,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if run_zcr {
         println!("=== Running Zero-Crossing Rate Analysis ===");
         zcr::process(&zcr_input.unwrap(), &zcr_output.unwrap())?;
-    }
-    if run_jitter {
-        println!("=== Running Jitter/Shimmer Analysis ===");
-        jitter_shimmer::process(&jitter_input.unwrap(), &jitter_output.unwrap())?;
     }
     if run_formant {
         println!("=== Running Formant Analysis ===");
