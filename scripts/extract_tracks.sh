@@ -1,6 +1,6 @@
 #!/bin/bash
 # usage: ./extract_tracks.sh input.mp4
-# requires: ffmpeg, ffprobe, ./perform_demucs.sh, ./pre-process_emotions, ./process_feature
+# requires: ffmpeg, ffprobe, ./perform_demucs.sh, ./formants_process, ./rms_energy_process, ./pitch_process, ./process_transcript.py
 
 # --- Source virtual environment ---
 source venv/bin/activate
@@ -128,66 +128,49 @@ else
                 # --- Process features for VOCALS ---
                 if [[ "$BASE_DEMUCS" == *"_vocals" ]]; then
                     echo "Processing features for $BASE_DEMUCS (vocals)..."
-                    
-                    # Generate raw CSV files
+
+                    # Generate CSV features
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" rms
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" zcr
-                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" pitch
-                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" formant
+                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" pitch       # <-- restored pitch CSV
                     run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" spectral
+                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" formant
                     run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" jitter
-                    
-                    # Post-process RMS CSV
+
+                    # --- Post-process RMS CSV ---
                     RMS_CSV="$OUTDIR/${BASE_DEMUCS}_rms.csv"
-                    if [ -f "$RMS_CSV" ]; then
-                        echo "Post-processing RMS CSV: $RMS_CSV"
-                        ./rms_energy_process "$RMS_CSV" --time_col time_sec
-                        echo "✓ RMS CSV post-processed"
-                    fi
-                    
-                    # Post-process Pitch CSV
+                    [ -f "$RMS_CSV" ] && ./rms_energy_process "$RMS_CSV" --time_col time_sec
+
+                    # --- Post-process Pitch CSV ---
                     PITCH_CSV="$OUTDIR/${BASE_DEMUCS}_pitch.csv"
-                    if [ -f "$PITCH_CSV" ]; then
-                        echo "Post-processing Pitch CSV: $PITCH_CSV"
-                        ./pitch_process "$PITCH_CSV" --time_col time_sec
-                        echo "✓ Pitch CSV post-processed"
-                    fi
-                    
-                    # Post-process Formant CSV
+                    [ -f "$PITCH_CSV" ] && ./pitch_process "$PITCH_CSV" --time_col time_sec
+
+                    # --- Post-process Formant CSV ---
                     FORMANT_CSV="$OUTDIR/${BASE_DEMUCS}_formant.csv"
                     if [ -f "$FORMANT_CSV" ]; then
-                        echo "Post-processing Formant CSV: $FORMANT_CSV"
                         FORMANT_PROCESSED="$OUTDIR/${BASE_DEMUCS}_formant_processed.csv"
                         ./formants_process "$FORMANT_CSV" "$FORMANT_PROCESSED"
-                        echo "✓ Formant CSV post-processed: $FORMANT_PROCESSED"
-                        # Remove intermediate formant CSV
                         rm -f "$FORMANT_CSV"
                     fi
-                    
-                    # --- Process transcript for 16kHz 16-bit vocals ---
-                    echo "Processing transcript for $BASE_DEMUCS (vocals)..."
+
+                    # --- Transcript ---
                     TRANSCRIPT_OUT="$OUTDIR/${BASE_DEMUCS}_transcript.csv"
                     python process_transcript.py "$OUT16" --output "$TRANSCRIPT_OUT"
-                    echo "✓ Transcript processed: $TRANSCRIPT_OUT"
                 else
                     # --- Process features for NONVOCALS ---
                     echo "Processing features for $BASE_DEMUCS (nonvocals)..."
-                    
-                    # Generate raw CSV files
+
+                    # Generate CSV features
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" rms
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" zcr
                     run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" spectral
-                    
-                    # Post-process RMS CSV
+
+                    # --- Post-process RMS CSV ---
                     RMS_CSV="$OUTDIR/${BASE_DEMUCS}_rms.csv"
-                    if [ -f "$RMS_CSV" ]; then
-                        echo "Post-processing RMS CSV: $RMS_CSV"
-                        ./rms_energy_process "$RMS_CSV" --time_col time_sec
-                        echo "✓ RMS CSV post-processed"
-                    fi
+                    [ -f "$RMS_CSV" ] && ./rms_energy_process "$RMS_CSV" --time_col time_sec
                 fi
 
-                # --- Delete all intermediate WAVs ---
+                # --- Delete intermediate WAVs ---
                 rm -f "$DEMUCS_FILE" "$OUT16" "$OUT22" "$OUT44"
             done
 

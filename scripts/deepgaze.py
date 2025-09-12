@@ -224,11 +224,11 @@ try:
                         'attention_center_x', 'attention_center_y', 'attention_concentration', 'attention_shift_rate'
                     ]
                     # Scale saliency values for better readability and processing
-                df['mean_saliency'] = df['mean_saliency'] * 50000  # Scale to ~0-2 range
-                df['max_saliency'] = df['max_saliency'] * 50000
-                df['saliency_change_rate'] = df['saliency_change_rate'] * 50000
-                
-                df = df[final_columns].round(6)
+                    df['mean_saliency'] = df['mean_saliency'] * 50000  # Scale to ~0-2 range
+                    df['max_saliency'] = df['max_saliency'] * 50000
+                    df['saliency_change_rate'] = df['saliency_change_rate'] * 50000
+                    
+                    df = df[final_columns].round(6)
 
                     # Write to CSV
                     mode = 'w' if is_first_chunk else 'a'
