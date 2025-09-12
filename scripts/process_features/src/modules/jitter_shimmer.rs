@@ -1,11 +1,49 @@
 use hound::{SampleFormat, WavReader};
-use csv::Writer;
+use csv::{ReaderBuilder, Writer};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fs::File;
+use std::path::Path;
 
-/// Process a WAV file and calculate pitch, jitter, shimmer, and HNR
-pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// Load pitch CSV into a map: channel_idx -> Vec<Option<f64>>
+fn load_pitch_csv(path: &str) -> Result<HashMap<usize, Vec<Option<f64>>>, Box<dyn Error>> {
+    let mut rdr = ReaderBuilder::new().from_path(path)?;
+    let headers = rdr.headers()?.clone();
+    let mut pitch_map: HashMap<usize, Vec<Option<f64>>> = HashMap::new();
+
+    for (i, header) in headers.iter().enumerate() {
+        if header.contains("_f0_hz") {
+            pitch_map.insert(i, Vec::new());
+        }
+    }
+
+    for result in rdr.records() {
+        let record = result?;
+        for (i, &(_, col_idx)) in headers
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.contains("_f0_hz"))
+            .enumerate()
+        {
+            let val = &record[col_idx];
+            let pitch = val.parse::<f64>().ok();
+            pitch_map.get_mut(&col_idx).unwrap().push(pitch);
+        }
+    }
+
+    Ok(pitch_map)
+}
+
+/// Process a WAV file and calculate jitter, shimmer, and HNR using precomputed pitch
+pub fn process(
+    input_path: &str,
+    pitch_csv_path: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("Input WAV file: {}", input_path);
+    println!("Pitch CSV file: {}", pitch_csv_path);
     println!("Output CSV file: {}", output_path);
 
     // --- OPEN WAV FILE ---
@@ -16,6 +54,9 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
 
     println!("Sample rate: {} Hz, {} channel(s)", samplerate, channels);
 
+    // --- LOAD PITCH CSV ---
+    let pitch_map = load_pitch_csv(pitch_csv_path)?;
+    
     // --- MULTIPROGRESS ---
     let m = MultiProgress::new();
     let status_bar = m.add(ProgressBar::new(1));
@@ -44,12 +85,11 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
                     }
                 }
                 24 => {
-                    // hound doesn’t directly expose i24, so read as i32 and shift
                     for (i, sample) in reader.into_samples::<i32>().enumerate() {
                         let s = sample?;
-                        let s24 = (s >> 8) as f64; // drop lowest 8 bits
+                        let s24 = (s >> 8) as f64;
                         let chan = i % channels;
-                        channel_buffers[chan].push(s24 / 8_388_607.0); // 2^23 - 1
+                        channel_buffers[chan].push(s24 / 8_388_607.0);
                     }
                 }
                 32 => {
@@ -71,7 +111,7 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
             for (i, sample) in reader.into_samples::<f32>().enumerate() {
                 let s = sample?;
                 let chan = i % channels;
-                channel_buffers[chan].push(s as f64); // already normalized [-1.0, 1.0]
+                channel_buffers[chan].push(s as f64);
             }
         }
     }
@@ -92,8 +132,6 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     // --- PROCESS EACH CHANNEL ---
     let window_len = (0.050 * samplerate as f64) as usize; // 50 ms
     let hop_len = (0.010 * samplerate as f64) as usize; // 10 ms
-    let min_f0 = 50.0;
-    let max_f0 = 500.0;
 
     let mut all_results: Vec<Vec<JitterShimmerResult>> = Vec::new();
 
@@ -105,6 +143,8 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
             channel_bar.inc(1);
             continue;
         }
+
+        let pitch_vec = pitch_map.get(&chan_idx).cloned().unwrap_or_default();
 
         status_bar.set_message(format!("[ == PROCESSING CHANNEL {} == ]", chan_idx + 1));
 
@@ -127,11 +167,25 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
 
         let results: Vec<JitterShimmerResult> = window_indices
             .par_iter()
-            .map(|&start| {
+            .enumerate()
+            .map(|(win_idx, &start)| {
                 let end = start + window_len;
                 let window = &samples[start..end];
                 let time_sec = start as f64 / samplerate as f64;
-                let result = analyze_window(window, samplerate, time_sec, min_f0, max_f0);
+
+                // Use pitch from CSV
+                let f0_hz = pitch_vec.get(win_idx).cloned().unwrap_or(None);
+
+                let result = if let Some(f0) = f0_hz {
+                    if f0 > 0.0 {
+                        analyze_window_with_pitch(window, samplerate, time_sec, f0)
+                    } else {
+                        JitterShimmerResult::empty(time_sec)
+                    }
+                } else {
+                    JitterShimmerResult::empty(time_sec)
+                };
+
                 window_bar.inc(1);
                 result
             })
@@ -188,13 +242,26 @@ struct JitterShimmerResult {
     hnr_db: Option<f64>,
 }
 
-/// Apply Hann window, estimate F0, and compute jitter/shimmer/HNR
-fn analyze_window(
+impl JitterShimmerResult {
+    fn empty(time_sec: f64) -> Self {
+        JitterShimmerResult {
+            time_sec,
+            f0_hz: None,
+            jitter_local: None,
+            jitter_ppq5: None,
+            shimmer_local: None,
+            shimmer_apq5: None,
+            hnr_db: None,
+        }
+    }
+}
+
+/// Analyze a window using **precomputed pitch**
+fn analyze_window_with_pitch(
     window: &[f64],
     sample_rate: usize,
     time_sec: f64,
-    min_f0: f64,
-    max_f0: f64,
+    f0_hz: f64,
 ) -> JitterShimmerResult {
     let windowed: Vec<f64> = window
         .iter()
@@ -205,29 +272,11 @@ fn analyze_window(
         })
         .collect();
 
-    let f0_hz = estimate_f0_autocorr(&windowed, sample_rate, min_f0, max_f0);
-
-    if f0_hz.is_none() {
-        return JitterShimmerResult {
-            time_sec,
-            f0_hz: None,
-            jitter_local: None,
-            jitter_ppq5: None,
-            shimmer_local: None,
-            shimmer_apq5: None,
-            hnr_db: None,
-        };
-    }
-
-    let f0 = f0_hz.unwrap();
-    let period_samples = sample_rate as f64 / f0;
+    let period_samples = sample_rate as f64 / f0_hz;
     let periods = extract_periods(&windowed, period_samples);
 
     let (jitter_local, jitter_ppq5) = if periods.len() >= 5 {
-        (
-            calculate_jitter_local(&periods, sample_rate),
-            calculate_jitter_ppq5(&periods, sample_rate),
-        )
+        (calculate_jitter_local(&periods, sample_rate), calculate_jitter_ppq5(&periods, sample_rate))
     } else {
         (None, None)
     };
@@ -239,11 +288,11 @@ fn analyze_window(
         (None, None)
     };
 
-    let hnr_db = calculate_hnr(&windowed, f0, sample_rate);
+    let hnr_db = calculate_hnr(&windowed, f0_hz, sample_rate);
 
     JitterShimmerResult {
         time_sec,
-        f0_hz,
+        f0_hz: Some(f0_hz),
         jitter_local,
         jitter_ppq5,
         shimmer_local,
@@ -252,41 +301,7 @@ fn analyze_window(
     }
 }
 
-fn estimate_f0_autocorr(signal: &[f64], sample_rate: usize, min_f0: f64, max_f0: f64) -> Option<f64> {
-    let min_lag = (sample_rate as f64 / max_f0) as usize;
-    let max_lag = (sample_rate as f64 / min_f0) as usize;
-    if max_lag >= signal.len() || min_lag >= max_lag {
-        return None;
-    }
-
-    let mut max_corr = 0.0;
-    let mut best_lag = 0;
-    for lag in min_lag..=max_lag.min(signal.len() - 1) {
-        let mut corr = 0.0;
-        let mut norm1 = 0.0;
-        let mut norm2 = 0.0;
-        let len = signal.len() - lag;
-        for i in 0..len {
-            corr += signal[i] * signal[i + lag];
-            norm1 += signal[i] * signal[i];
-            norm2 += signal[i + lag] * signal[i + lag];
-        }
-        if norm1 > 0.0 && norm2 > 0.0 {
-            let normalized = corr / (norm1 * norm2).sqrt();
-            if normalized > max_corr {
-                max_corr = normalized;
-                best_lag = lag;
-            }
-        }
-    }
-
-    if max_corr > 0.3 && best_lag > 0 {
-        Some(sample_rate as f64 / best_lag as f64)
-    } else {
-        None
-    }
-}
-
+// --- Same helper functions as before ---
 fn extract_periods(signal: &[f64], period_samples: f64) -> Vec<Vec<f64>> {
     let mut periods = Vec::new();
     let period_len = period_samples as usize;
@@ -306,95 +321,56 @@ fn calculate_amplitude(period: &[f64]) -> f64 {
 }
 
 fn calculate_jitter_local(periods: &[Vec<f64>], sample_rate: usize) -> Option<f64> {
-    if periods.len() < 2 {
-        return None;
-    }
+    if periods.len() < 2 { return None; }
     let durations: Vec<f64> = periods.iter().map(|p| p.len() as f64 / sample_rate as f64).collect();
-    let diffs: Vec<f64> = durations.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+    let diffs: Vec<f64> = durations.windows(2).map(|w| (w[1]-w[0]).abs()).collect();
     let mean_diff: f64 = diffs.iter().sum::<f64>() / diffs.len() as f64;
     let mean_period: f64 = durations.iter().sum::<f64>() / durations.len() as f64;
-    if mean_period > 0.0 {
-        Some((mean_diff / mean_period) * 100.0)
-    } else {
-        None
-    }
+    if mean_period > 0.0 { Some((mean_diff/mean_period)*100.0) } else { None }
 }
 
 fn calculate_jitter_ppq5(periods: &[Vec<f64>], sample_rate: usize) -> Option<f64> {
-    if periods.len() < 5 {
-        return None;
-    }
+    if periods.len() < 5 { return None; }
     let durations: Vec<f64> = periods.iter().map(|p| p.len() as f64 / sample_rate as f64).collect();
-    let ppq5_values: Vec<f64> = (2..durations.len() - 2)
-        .map(|i| {
-            let mean5 = durations[i - 2..=i + 2].iter().sum::<f64>() / 5.0;
-            (durations[i] - mean5).abs()
-        })
-        .collect();
+    let ppq5_values: Vec<f64> = (2..durations.len()-2).map(|i| {
+        let mean5 = durations[i-2..=i+2].iter().sum::<f64>()/5.0;
+        (durations[i]-mean5).abs()
+    }).collect();
     let mean_ppq5 = ppq5_values.iter().sum::<f64>() / ppq5_values.len() as f64;
     let mean_period: f64 = durations.iter().sum::<f64>() / durations.len() as f64;
-    if mean_period > 0.0 {
-        Some((mean_ppq5 / mean_period) * 100.0)
-    } else {
-        None
-    }
+    if mean_period > 0.0 { Some((mean_ppq5/mean_period)*100.0) } else { None }
 }
 
 fn calculate_shimmer_local(amplitudes: &[f64]) -> Option<f64> {
-    if amplitudes.len() < 2 {
-        return None;
-    }
-    let diffs: Vec<f64> = amplitudes.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+    if amplitudes.len() < 2 { return None; }
+    let diffs: Vec<f64> = amplitudes.windows(2).map(|w| (w[1]-w[0]).abs()).collect();
     let mean_diff: f64 = diffs.iter().sum::<f64>() / diffs.len() as f64;
     let mean_amp: f64 = amplitudes.iter().sum::<f64>() / amplitudes.len() as f64;
-    if mean_amp > 0.0 {
-        Some((mean_diff / mean_amp) * 100.0)
-    } else {
-        None
-    }
+    if mean_amp > 0.0 { Some((mean_diff/mean_amp)*100.0) } else { None }
 }
 
 fn calculate_shimmer_apq5(amplitudes: &[f64]) -> Option<f64> {
-    if amplitudes.len() < 5 {
-        return None;
-    }
-    let apq5_values: Vec<f64> = (2..amplitudes.len() - 2)
-        .map(|i| {
-            let mean5 = amplitudes[i - 2..=i + 2].iter().sum::<f64>() / 5.0;
-            (amplitudes[i] - mean5).abs()
-        })
-        .collect();
+    if amplitudes.len() < 5 { return None; }
+    let apq5_values: Vec<f64> = (2..amplitudes.len()-2).map(|i| {
+        let mean5 = amplitudes[i-2..=i+2].iter().sum::<f64>() / 5.0;
+        (amplitudes[i]-mean5).abs()
+    }).collect();
     let mean_apq5 = apq5_values.iter().sum::<f64>() / apq5_values.len() as f64;
     let mean_amp: f64 = amplitudes.iter().sum::<f64>() / amplitudes.len() as f64;
-    if mean_amp > 0.0 {
-        Some((mean_apq5 / mean_amp) * 100.0)
-    } else {
-        None
-    }
+    if mean_amp > 0.0 { Some((mean_apq5/mean_amp)*100.0) } else { None }
 }
 
 fn calculate_hnr(signal: &[f64], f0: f64, _sample_rate: usize) -> Option<f64> {
-    if f0 <= 0.0 {
-        return None;
-    }
-    let period_samples = f0.recip();
+    if f0 <= 0.0 { return None; }
     let mut harmonic = 0.0;
     let mut noise = 0.0;
     for i in 0..signal.len().saturating_sub(1) {
         let current = signal[i];
         let delayed = signal[i + 1];
         let corr = current * delayed;
-        if corr > 0.0 {
-            harmonic += corr;
-        } else {
-            noise += corr.abs();
-        }
+        if corr > 0.0 { harmonic += corr; } else { noise += corr.abs(); }
     }
-    if noise > 0.0 && harmonic > 0.0 {
-        Some(10.0 * (harmonic / noise).log10())
-    } else if harmonic > 0.0 {
-        Some(40.0)
-    } else {
-        Some(0.0)
-    }
+    if noise > 0.0 && harmonic > 0.0 { Some(10.0 * (harmonic/noise).log10()) }
+    else if harmonic > 0.0 { Some(40.0) }
+    else { Some(0.0) }
 }
