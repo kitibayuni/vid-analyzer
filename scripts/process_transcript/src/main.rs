@@ -161,25 +161,82 @@ fn main() -> Result<(), Box<dyn Error>> {
     }).collect();
     let wps_ema_5s = ema(&wps_series, 2.0/(5.0+1.0));
 
-    // Compute weighted engagement score (positive + negative emotions)
+    // Reliability weights
+    let reliabilities = HashMap::from([
+        ("VAD", 0.975),
+        ("Social", 0.955),
+        ("Worry", 0.82),
+        ("Emotions", 0.525),
+    ]);
+
+    // Feature → reliability group
+    let feature_groups: HashMap<&str, &str> = HashMap::from([
+        // VAD
+        ("valence", "VAD"),
+        ("dominance", "VAD"),
+        ("arousal", "VAD"),
+
+        // Social
+        ("warmth", "Social"),
+        ("competence", "Social"),
+        ("trust1", "Social"),
+        ("sociability", "Social"),
+
+        // Worry
+        ("worry", "Worry"),
+
+        // Emotions
+        ("anger", "Emotions"),
+        ("disgust", "Emotions"),
+        ("fear", "Emotions"),
+        ("sadness", "Emotions"),
+        ("negative", "Emotions"),
+        ("anticipation", "Emotions"),
+        ("joy", "Emotions"),
+        ("positive", "Emotions"),
+        ("surprise", "Emotions"),
+        ("trust2", "Emotions"),
+    ]);
+
+    // Compute weighted engagement + neg/pos scores
     let mut engagement_raw = vec![];
+    let mut negativity_raw = vec![];
+    let mut positivity_raw = vec![];
+
     for fmap in &lex_features {
-        let mut score = 0.0;
-        let weights: HashMap<&str,f64> = HashMap::from([
-            ("joy",1.0), ("positive",0.9), ("trust",0.8),
-            ("anger",0.7), ("fear",0.8), ("sadness",0.6),
-            ("disgust",0.6), ("negative",0.7), ("surprise",0.5),
-            ("anticipation",0.6), ("competence",0.5), ("dominance",0.4),
-            ("arousal",0.5), ("sociability",0.3), ("warmth",0.3), ("valence",0.5)
-        ]);
+        let mut eng_score = 0.0;
+        let mut neg_score = 0.0;
+        let mut pos_score = 0.0;
+
         for (k,v) in fmap {
-            if let Some(w) = weights.get(k.as_str()) { score += v * w; }
+            if let Some(group) = feature_groups.get(k.as_str()) {
+                if let Some(rel) = reliabilities.get(group) {
+                    let weighted_val = v * rel;
+                    eng_score += weighted_val;
+
+                    match k.as_str() {
+                        // Negativity subgroup
+                        "anger" | "disgust" | "fear" | "sadness" | "negative" => {
+                            neg_score += weighted_val;
+                        }
+                        // Positivity subgroup
+                        "anticipation" | "joy" | "positive" | "surprise" | "trust2" => {
+                            pos_score += weighted_val;
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
-        engagement_raw.push(score);
+        engagement_raw.push(eng_score);
+        negativity_raw.push(neg_score);
+        positivity_raw.push(pos_score);
     }
 
     // Normalize to 0-1 percentile
     let engagement_norm = normalize_percentiles(&engagement_raw);
+    let negativity_norm = normalize_percentiles(&negativity_raw);
+    let positivity_norm = normalize_percentiles(&positivity_raw);
 
     // Compute EMA 1s,5s,10s on normalized engagement
     let alpha_1s = 2.0/(1.0+1.0);
@@ -197,9 +254,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut all_features: Vec<String> = lex_features.iter().flat_map(|fmap| fmap.keys().cloned()).collect();
     all_features.sort(); all_features.dedup();
 
-    let mut out_headers = vec!["time_sec","word","words_per_sec","words_per_sec_ema_5s"];
+    let mut out_headers = vec![
+        "time_sec","word",
+        "words_per_sec","words_per_sec_ema_5s"
+    ];
     out_headers.extend(all_features.iter().map(|s| s.as_str()));
-    out_headers.extend(&["engagement_score","engagement_ema_1s","engagement_ema_5s","engagement_ema_10s"]);
+    out_headers.extend(&[
+        "engagement_score","negativity_score","positivity_score",
+        "engagement_ema_1s","engagement_ema_5s","engagement_ema_10s"
+    ]);
     wtr.write_record(&out_headers)?;
 
     for (i, &tt) in timeline.iter().enumerate() {
@@ -212,6 +275,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let fmap = &lex_features[i];
         for feat in &all_features { row.push(fmap.get(feat).cloned().unwrap_or(0.0).to_string()); }
         row.push(engagement_norm[i].to_string());
+        row.push(negativity_norm[i].to_string());
+        row.push(positivity_norm[i].to_string());
         row.push(engagement_ema_1s[i].to_string());
         row.push(engagement_ema_5s[i].to_string());
         row.push(engagement_ema_10s[i].to_string());
