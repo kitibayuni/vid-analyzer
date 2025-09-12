@@ -1,7 +1,8 @@
 use csv::{ReaderBuilder, WriterBuilder};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::error::Error;
+use std::fs;
 use std::path::Path;
 
 /// Exponential Moving Average
@@ -66,6 +67,22 @@ fn load_lexicon(path: &str) -> Result<HashMap<String, Vec<LexiconEntry>>, Box<dy
     Ok(lex_map)
 }
 
+/// Load swear words from a simple text file (one word per line)
+fn load_swear_words(path: &str) -> Result<HashSet<String>, Box<dyn Error>> {
+    if !Path::new(path).exists() {
+        return Err(format!("File does not exist: {}", path).into());
+    }
+    
+    let content = fs::read_to_string(path)?;
+    let swear_words: HashSet<String> = content
+        .lines()
+        .map(|line| line.trim().to_lowercase())
+        .filter(|line| !line.is_empty())
+        .collect();
+    
+    Ok(swear_words)
+}
+
 /// Normalize a vector to percentiles 0–1
 fn normalize_percentiles(values: &[f64]) -> Vec<f64> {
     let mut sorted = values.to_vec();
@@ -78,8 +95,8 @@ fn normalize_percentiles(values: &[f64]) -> Vec<f64> {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 6 {
-        eprintln!("Usage: {} <transcript.csv> <emo.csv> <vad.csv> <wcst.csv> <worry.csv>", args[0]);
+    if args.len() < 7 {
+        eprintln!("Usage: {} <transcript.csv> <emo.csv> <vad.csv> <wcst.csv> <worry.csv> <swears.txt>", args[0]);
         std::process::exit(1);
     }
 
@@ -88,11 +105,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let vad_path = &args[3];
     let wcst_path = &args[4];
     let worry_path = &args[5];
+    let swears_path = &args[6];
 
     let emo_lex = load_lexicon(emo_path)?;
     let vad_lex = load_lexicon(vad_path)?;
     let wcst_lex = load_lexicon(wcst_path)?;
     let worry_lex = load_lexicon(worry_path)?;
+    let swear_words = load_swear_words(swears_path)?;
 
     // Load transcript
     let mut rdr = ReaderBuilder::new().from_path(transcript_path)?;
@@ -125,11 +144,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Lexicon features per timeline slot
+    // Lexicon features per timeline slot + swear detection
     let mut lex_features: Vec<HashMap<String,f64>> = vec![HashMap::new(); timeline.len()];
+    let mut swear_detected: Vec<f64> = vec![0.0; timeline.len()];
+    
     for (i, _) in timeline.iter().enumerate() {
         if let Some(word) = word_map.get(&i) {
             let wl = word.to_lowercase();
+            
+            // Check for swear words
+            if swear_words.contains(&wl) {
+                swear_detected[i] = 1.0;
+            }
+            
+            // Check lexicons
             for lex in &[&emo_lex,&vad_lex,&wcst_lex,&worry_lex] {
                 if let Some(entries) = lex.get(&wl) {
                     let mut best_entry = None;
@@ -161,12 +189,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     }).collect();
     let wps_ema_5s = ema(&wps_series, 2.0/(5.0+1.0));
 
-    // Reliability weights
+    // Reliability weights (added swearing weight)
     let reliabilities = HashMap::from([
         ("VAD", 0.975),
         ("Social", 0.955),
         ("Worry", 0.82),
         ("Emotions", 0.525),
+        ("Swearing", 1.2), // High weight due to strong emotional arousal and engagement indication
     ]);
 
     // Feature → reliability group
@@ -196,6 +225,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("positive", "Emotions"),
         ("surprise", "Emotions"),
         ("trust2", "Emotions"),
+        
+        // Swearing
+        ("swears", "Swearing"),
     ]);
 
     // Compute weighted engagement + neg/pos scores
@@ -203,11 +235,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut negativity_raw = vec![];
     let mut positivity_raw = vec![];
 
-    for fmap in &lex_features {
+    for (i, fmap) in lex_features.iter().enumerate() {
         let mut eng_score = 0.0;
         let mut neg_score = 0.0;
         let mut pos_score = 0.0;
 
+        // Process lexicon features
         for (k,v) in fmap {
             if let Some(group) = feature_groups.get(k.as_str()) {
                 if let Some(rel) = reliabilities.get(group) {
@@ -228,6 +261,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        
+        // Add swearing contribution
+        let swear_weight = reliabilities.get("Swearing").unwrap();
+        let swear_contribution = swear_detected[i] * swear_weight;
+        eng_score += swear_contribution;  // Swearing increases engagement
+        neg_score += swear_contribution;  // Swearing also increases negativity
+        
         engagement_raw.push(eng_score);
         negativity_raw.push(neg_score);
         positivity_raw.push(pos_score);
@@ -260,6 +300,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ];
     out_headers.extend(all_features.iter().map(|s| s.as_str()));
     out_headers.extend(&[
+        "swears", // New column for swear detection
         "engagement_score","negativity_score","positivity_score",
         "engagement_ema_1s","engagement_ema_5s","engagement_ema_10s"
     ]);
@@ -274,6 +315,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ];
         let fmap = &lex_features[i];
         for feat in &all_features { row.push(fmap.get(feat).cloned().unwrap_or(0.0).to_string()); }
+        row.push(swear_detected[i].to_string()); // Add swear detection value
         row.push(engagement_norm[i].to_string());
         row.push(negativity_norm[i].to_string());
         row.push(positivity_norm[i].to_string());
