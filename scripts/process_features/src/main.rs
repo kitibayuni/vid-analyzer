@@ -2,13 +2,13 @@ use std::env;
 
 mod modules {
     pub mod rms_energy;
-    pub mod pitch_jitshim;
+    pub mod pitch;
     pub mod spectral_features;
     pub mod formant_analysis;
     pub mod zcr;
 }
 
-use modules::{rms_energy, pitch_jitshim, spectral_features, formant_analysis, zcr};
+use modules::{rms_energy, pitch, spectral_features, formant_analysis, zcr};
 
 fn print_usage() {
     let prog_name = env::args().nth(0).unwrap_or_default();
@@ -18,16 +18,11 @@ fn print_usage() {
     eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv>", prog_name);
     eprintln!("  {} --zcr-in <input.wav> --zcr-out <output.csv>", prog_name);
     eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv>", prog_name);
-    eprintln!("  {} --rms-in <rms_input.wav> --rms-out <rms_output.csv> \\
-                  --pitch-in <pitch_input.wav> --pitch-out <pitch_output.csv>", prog_name);
-    eprintln!("  {} --spectral-in <input.wav> --spectral-out <output.csv> \\
-                  --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
-    eprintln!("  {} --formant-in <input.wav> --formant-out <output.csv> \\
-                  --pitch-in <input.wav> --pitch-out <output.csv>", prog_name);
+    eprintln!("  {} can combine multiple feature sets in one command", prog_name);
     eprintln!();
     eprintln!("Features:");
     eprintln!("  --rms-*       : RMS energy and total energy analysis");
-    eprintln!("  --pitch-*     : Integrated pitch, jitter, shimmer, and HNR analysis");
+    eprintln!("  --pitch-*     : Pitch detection and analysis");
     eprintln!("  --spectral-*  : Spectral features (centroid, rolloff, bandwidth, flatness, flux)");
     eprintln!("  --zcr-*       : Zero-crossing rate analysis");
     eprintln!("  --formant-*   : Formant frequency analysis (F1, F2, F3, F4)");
@@ -86,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
     if run_pitch && (pitch_input.is_none() || pitch_output.is_none()) {
-        eprintln!("Error: Both --pitch-in and --pitch-out are required for pitch/jitter/shimmer processing");
+        eprintln!("Error: Both --pitch-in and --pitch-out are required for pitch processing");
         std::process::exit(1);
     }
     if run_spectral && (spectral_input.is_none() || spectral_output.is_none()) {
@@ -114,8 +109,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rms_energy::process(&rms_input.unwrap(), &rms_output.unwrap())?;
     }
     if run_pitch {
-        println!("=== Running Integrated Pitch/Jitter/Shimmer Analysis ===");
-        pitch_jitshim::process(&pitch_input.unwrap(), &pitch_output.unwrap())?;
+        println!("=== Running Pitch Analysis ===");
+        pitch::process(&pitch_input.unwrap(), &pitch_output.unwrap())?;
     }
     if run_spectral {
         println!("=== Running Spectral Features Analysis ===");
