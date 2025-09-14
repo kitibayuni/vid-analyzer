@@ -210,7 +210,19 @@ else
 
                     # --- Post-process RMS CSV ---
                     RMS_CSV="$OUTDIR/${BASE_DEMUCS}_rms.csv"
-                    [ -f "$RMS_CSV" ] && ./rms_energy_process "$RMS_CSV" --time_col time_sec
+                    if [ -f "$RMS_CSV" ]; then
+                        ./rms_energy_process "$RMS_CSV" --time_col time_sec
+                        # Keep only processed version, remove intermediate
+                        rm -f "$RMS_CSV"
+                    fi
+
+                    # --- Post-process ZCR CSV ---
+                    ZCR_CSV="$OUTDIR/${BASE_DEMUCS}_zcr.csv"
+                    if [ -f "$ZCR_CSV" ]; then
+                        ./zcr_process "$ZCR_CSV" --time_col time_sec
+                        # Keep only processed version, remove intermediate
+                        rm -f "$ZCR_CSV"
+                    fi
                     
                     # --- NEW: Post-process Spectral CSV for nonvocals too ---
                     SPECTRAL_CSV="$OUTDIR/${BASE_DEMUCS}_spectral.csv"
@@ -218,6 +230,8 @@ else
                         echo "Processing spectral CSV: $SPECTRAL_CSV"
                         ./spectrals_process "$SPECTRAL_CSV"
                         echo "✓ Spectral processing complete"
+                        # Keep only processed version, remove intermediate
+                        rm -f "$SPECTRAL_CSV"
                     fi
                 fi
 
