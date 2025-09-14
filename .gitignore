@@ -11,6 +11,8 @@ scripts/process_rms_energy/target/*
 scripts/process_pitch/target/*
 scripts/process_salience/target/*
 scripts/process_transcript/target/*
+scripts/process_spectrals/target/*
+scripts/gui_overlay/target/*
 example.flac
 example1.flac
 scripts/data_visualization/venv/*

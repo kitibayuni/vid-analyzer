@@ -174,7 +174,7 @@ else
                     # Process emotions
                     if [ -f "$EMOTION_NPY" ]; then
                         echo "Processing emotions: $EMOTION_NPY -> $EMOTION_CSV"
-                        python process_emotion.py "$EMOTION_NPY" --output "$EMOTION_CSV"
+                        python process_emotion.py "$EMOTION_NPY" "$EMOTION_CSV" --chunk_sec 5
                         echo "✓ Emotion processing complete"
                         # Clean up intermediate .npy file
                         rm -f "$EMOTION_NPY"
