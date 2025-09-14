@@ -1,2 +1,4 @@
+scripts/models/wav2vec2-large-robust-12-ft-emotion-msp-dim/model.safetensors filter=lfs diff=lfs merge=lfs -text
+scripts/models/wav2vec2-large-robust-12-ft-emotion-msp-dim/pytorch_model.bin filter=lfs diff=lfs merge=lfs -text
 *.safetensors filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text
