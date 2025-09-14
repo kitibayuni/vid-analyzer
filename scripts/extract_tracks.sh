@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: ./extract_tracks.sh input.mp4
 # requires: ffmpeg, ffprobe, ./perform_demucs.sh, ./formants_process, ./rms_energy_process, ./pitch_process, ./process_transcript.py
+# requires: ./pre-process_emotions, ./process_emotion.py, ./spectrals_process, ./salience_process, ./transcript_process
 
 # --- Source virtual environment ---
 source venv/bin/activate
@@ -10,7 +11,7 @@ INPUT="$(dirname "$0")/$ARG"
 BASENAME=$(basename "$INPUT" | sed 's/\.[^.]*$//')
 OUTDIR="$(dirname "$0")/../temp"
 
-echo "=== Media Track Extractor - Verbose Mode ==="
+echo "=== Media Track Extractor - Enhanced with Emotion Processing ==="
 echo "Script started at: $(date)"
 echo ""
 
@@ -153,9 +154,51 @@ else
                         rm -f "$FORMANT_CSV"
                     fi
 
+                    # --- NEW: Post-process Spectral CSV ---
+                    SPECTRAL_CSV="$OUTDIR/${BASE_DEMUCS}_spectral.csv"
+                    if [ -f "$SPECTRAL_CSV" ]; then
+                        echo "Processing spectral CSV: $SPECTRAL_CSV"
+                        ./spectrals_process "$SPECTRAL_CSV"
+                        echo "✓ Spectral processing complete"
+                    fi
+
+                    # --- NEW: Emotion preprocessing and analysis ---
+                    echo "Processing emotions for $BASE_DEMUCS..."
+                    EMOTION_NPY="$OUTDIR/${BASE_DEMUCS}_emotion.npy"
+                    EMOTION_CSV="$OUTDIR/${BASE_DEMUCS}_emotion_processed.csv"
+                    
+                    # Pre-process emotions (16kHz input, target_sr=16000)
+                    echo "Pre-processing emotions: $OUT16 -> $EMOTION_NPY"
+                    ./pre-process_emotions "$OUT16" "$EMOTION_NPY" 16000
+                    
+                    # Process emotions
+                    if [ -f "$EMOTION_NPY" ]; then
+                        echo "Processing emotions: $EMOTION_NPY -> $EMOTION_CSV"
+                        python process_emotion.py "$EMOTION_NPY" --output "$EMOTION_CSV"
+                        echo "✓ Emotion processing complete"
+                        # Clean up intermediate .npy file
+                        rm -f "$EMOTION_NPY"
+                    else
+                        echo "✗ Emotion preprocessing failed - no .npy file generated"
+                    fi
+
                     # --- Transcript ---
                     TRANSCRIPT_OUT="$OUTDIR/${BASE_DEMUCS}_transcript.csv"
                     python process_transcript.py "$OUT16" --output "$TRANSCRIPT_OUT"
+                    
+                    # --- NEW: Enhanced transcript processing with lexicons ---
+                    if [ -f "$TRANSCRIPT_OUT" ]; then
+                        echo "Processing transcript with lexicons..."
+                        TRANSCRIPT_PROCESSED="$OUTDIR/${BASE_DEMUCS}_transcript_processed.csv"
+                        ./transcript_process "$TRANSCRIPT_OUT" \
+                            lexicons/NRC-Emo-Lex-v0.92.csv \
+                            lexicons/NRC-VAD-Lex-v2.1.csv \
+                            lexicons/NRC-WCST-Lex-v1.0.csv \
+                            lexicons/WW-Lex-v1.csv \
+                            lexicons/swears.txt
+                        echo "✓ Transcript lexicon processing complete"
+                    fi
+                    
                 else
                     # --- Process features for NONVOCALS ---
                     echo "Processing features for $BASE_DEMUCS (nonvocals)..."
@@ -168,6 +211,14 @@ else
                     # --- Post-process RMS CSV ---
                     RMS_CSV="$OUTDIR/${BASE_DEMUCS}_rms.csv"
                     [ -f "$RMS_CSV" ] && ./rms_energy_process "$RMS_CSV" --time_col time_sec
+                    
+                    # --- NEW: Post-process Spectral CSV for nonvocals too ---
+                    SPECTRAL_CSV="$OUTDIR/${BASE_DEMUCS}_spectral.csv"
+                    if [ -f "$SPECTRAL_CSV" ]; then
+                        echo "Processing spectral CSV: $SPECTRAL_CSV"
+                        ./spectrals_process "$SPECTRAL_CSV"
+                        echo "✓ Spectral processing complete"
+                    fi
                 fi
 
                 # --- Delete intermediate WAVs ---
@@ -204,6 +255,13 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
         # Run DeepGaze salience extraction
         echo "Running DeepGaze on $OUTFILE -> $SALIENCE_OUT"
         python deepgaze.py "$OUTFILE" "$SALIENCE_OUT"
+
+        # --- NEW: Process salience CSV ---
+        if [ -f "$SALIENCE_OUT" ]; then
+            echo "Processing salience CSV: $SALIENCE_OUT"
+            ./salience_process "$SALIENCE_OUT" --time_col time_sec
+            echo "✓ Salience processing complete"
+        fi
 
         # Cleanup
         rm -f "$OUTFILE"
