@@ -63,13 +63,38 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Prepare global header
-    let mut all_headers = vec![time_col.to_string()];
-    for (i, d) in datasets.iter().enumerate() {
+    // Detect duplicates across CSVs
+    let mut col_counts: HashMap<String, usize> = HashMap::new();
+    for d in &datasets {
         for h in &d.headers {
             if h != time_col {
-                all_headers.push(format!("file{}_{}", i + 1, h));
+                *col_counts.entry(h.clone()).or_default() += 1;
             }
+        }
+    }
+
+    // Prepare global header
+    let mut all_headers = vec![time_col.to_string()];
+    let mut dup_counters: HashMap<String, usize> = HashMap::new();
+
+    for d in &datasets {
+        for h in &d.headers {
+            if h == time_col { continue; }
+
+            let header_name = if let Some(&count) = col_counts.get(h) {
+                if count > 1 {
+                    let counter = dup_counters.entry(h.clone()).or_insert(1);
+                    let name = format!("DUP{}_{}", counter, h);
+                    *counter += 1;
+                    name
+                } else {
+                    h.clone()
+                }
+            } else {
+                h.clone()
+            };
+
+            all_headers.push(header_name);
         }
     }
 
