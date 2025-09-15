@@ -245,7 +245,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output_path = input_file.with_file_name(format!("{}_processed.csv", input_file.file_stem().unwrap().to_string_lossy()));
     let mut wtr = WriterBuilder::new().from_path(&output_path)?;
 
-    let mut out_headers = vec!["window_start_sec".to_string()];
+    let mut out_headers = vec!["time_sec".to_string()];
     for ch in &channels {
         for f in FEATURES {
             out_headers.push(format!("{}_{}", ch, f));
@@ -253,12 +253,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
 
+    wtr.write_record(&out_headers)?;  // <-- this line is missing in your code
+
     for i in 0..window_times.len() {
         let mut row = vec![format!("{:.6}", window_times[i])];
         for ch in &channels {
             if let Some(cd) = final_results.get(ch) {
-                for f in FEATURES { let val = cd.get(*f).and_then(|v| v.get(i)).copied().unwrap_or(0.0); row.push(format!("{:.6}", val)); }
-            } else { for _ in FEATURES { row.push("0.0".to_string()); } }
+                for f in FEATURES {
+                    let val = cd.get(*f).and_then(|v| v.get(i)).copied().unwrap_or(0.0);
+                    row.push(format!("{:.6}", val));
+                }
+            } else {
+                for _ in FEATURES {
+                    row.push("0.0".to_string());
+                }
+            }
         }
         wtr.write_record(&row)?;
     }

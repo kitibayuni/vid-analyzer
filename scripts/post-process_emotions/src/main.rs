@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: {} <input_emotions.csv>", args[0]);
-        eprintln!("Expected columns: chunk_index,start_sec,end_sec,valence,arousal,dominance,cat_neu,cat_hap,cat_ang,cat_sad,predicted_emotion,confidence");
+        eprintln!("Expected columns: chunk_index,time_sec,end_sec,valence,arousal,dominance,cat_neu,cat_hap,cat_ang,cat_sad,predicted_emotion,confidence");
         std::process::exit(1);
     }
 
