@@ -7,9 +7,9 @@ use std::path::Path;
 const FEATURES: &[&str] = &[
     "pitch_norm", "pitch_variation", "pitch_range", "pitch_modulation",
     "jitter_local", "jitter_ppq5", "shimmer_local", "shimmer_apq5",
-    "hnr", "engagement_score",
-    "engagement_ema_1s", "engagement_ema_5s", "engagement_ema_10s",
-    "engagement_ema_1s_percentile", "engagement_ema_5s_percentile", "engagement_ema_10s_percentile"
+    "hnr", "vfeats_engage_score",
+    "vfeats_engage_ema_1s", "vfeats_engage_ema_5s", "vfeats_engage_ema_10s",
+    "vfeats_engage_ema_1s_percentile", "vfeats_engage_ema_5s_percentile", "vfeats_engage_ema_10s_percentile"
 ];
 
 #[derive(Default)]
@@ -219,17 +219,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (ch, features) in &all_results {
         let raw: Vec<Vec<f64>> = (0..10).map(|i| features.iter().map(|f| f.to_vec()[i]).collect()).collect();
-        let mut channel_data: HashMap<String, Vec<f64>> = FEATURES[0..10].iter().enumerate().map(|(i,f)| (f.to_string(), normalize_01(&raw[i])) ).collect();
-        let engagement = channel_data.get("engagement_score").unwrap();
+        let mut channel_data: HashMap<String, Vec<f64>> = FEATURES[0..10].iter()
+            .enumerate()
+            .map(|(i,f)| {
+                let key = if f.contains("vfeats_engage") { f.to_string() } else { f.to_string() };
+                (key, normalize_01(&raw[i]))
+            }).collect();
+
+        let engagement = channel_data.get("vfeats_engage_score").unwrap();
         let ema_1s = ema(engagement, alpha_1s);
         let ema_5s = ema(engagement, alpha_5s);
         let ema_10s = ema(engagement, alpha_10s);
-        channel_data.insert("engagement_ema_1s".to_string(), ema_1s.clone());
-        channel_data.insert("engagement_ema_5s".to_string(), ema_5s.clone());
-        channel_data.insert("engagement_ema_10s".to_string(), ema_10s.clone());
-        channel_data.insert("engagement_ema_1s_percentile".to_string(), percentile_rank(&ema_1s));
-        channel_data.insert("engagement_ema_5s_percentile".to_string(), percentile_rank(&ema_5s));
-        channel_data.insert("engagement_ema_10s_percentile".to_string(), percentile_rank(&ema_10s));
+
+        channel_data.insert("vfeats_engage_ema_1s".to_string(), ema_1s.clone());
+        channel_data.insert("vfeats_engage_ema_5s".to_string(), ema_5s.clone());
+        channel_data.insert("vfeats_engage_ema_10s".to_string(), ema_10s.clone());
+
+        channel_data.insert("vfeats_engage_ema_1s_percentile".to_string(), percentile_rank(&ema_1s));
+        channel_data.insert("vfeats_engage_ema_5s_percentile".to_string(), percentile_rank(&ema_5s));
+        channel_data.insert("vfeats_engage_ema_10s_percentile".to_string(), percentile_rank(&ema_10s));
         final_results.insert(ch.clone(), channel_data);
     }
 
@@ -238,8 +246,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut wtr = WriterBuilder::new().from_path(&output_path)?;
 
     let mut out_headers = vec!["window_start_sec".to_string()];
-    for ch in &channels { for f in FEATURES { out_headers.push(format!("{}_{}", ch, f)); } }
-    wtr.write_record(&out_headers)?;
+    for ch in &channels {
+        for f in FEATURES {
+            out_headers.push(format!("{}_{}", ch, f));
+        }
+    }
+
 
     for i in 0..window_times.len() {
         let mut row = vec![format!("{:.6}", window_times[i])];
