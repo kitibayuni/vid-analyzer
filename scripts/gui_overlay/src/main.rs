@@ -56,19 +56,17 @@ fn main() -> Result<()> {
         panic!("Failed to open video");
     }
 
-    let fps = cap.get(videoio::CAP_PROP_FPS)?;
+    let fps = cap.get(videoio::CAP_PROP_FPS)? as f64;
     let width = cap.get(videoio::CAP_PROP_FRAME_WIDTH)? as i32;
     let height = cap.get(videoio::CAP_PROP_FRAME_HEIGHT)? as i32;
 
-    // Overlay sizes
     let top_bar_height = 60;
     let bottom_bar_height = 120;
     let right_bar_width = 300;
 
-    let full_width = width;
-    let full_height = height;
+    let full_width = width + right_bar_width;
+    let full_height = height + top_bar_height + bottom_bar_height;
 
-    // Video writer
     let fourcc = videoio::VideoWriter::fourcc('a','v','c','1')?;
     let mut writer = videoio::VideoWriter::new(
         "output_overlay.mp4",
@@ -78,7 +76,7 @@ fn main() -> Result<()> {
         true
     )?;
 
-    // Attention smoothing
+    // Attention smoothing and trail
     let mut last_x = width / 2;
     let mut last_y = height / 2;
     let movement_amplifier = 3.0;
@@ -86,9 +84,9 @@ fn main() -> Result<()> {
     let trail_length = 10;
     let mut trail: Vec<(i32, i32)> = Vec::new();
 
-    // --- Scaling for video in top-left ---
-    let scaled_video_width = (width as f64 * 0.5) as i32;  // example scale factor
-    let scaled_video_height = (height as f64 * 0.5) as i32;
+    // Scale video for top-left display
+    let scaled_video_width = width / 2;
+    let scaled_video_height = height / 2;
 
     let mut frame_idx = 0;
     loop {
@@ -104,7 +102,7 @@ fn main() -> Result<()> {
             .unwrap()
             .clone();
 
-        // --- Create canvas with original resolution ---
+        // Create canvas
         let mut canvas = Mat::zeros(full_height, full_width, frame.typ())?.to_mat()?;
 
         // --- Resize original frame to top-left ---
@@ -118,24 +116,24 @@ fn main() -> Result<()> {
             imgproc::INTER_LINEAR
         )?;
 
-        let roi = core::Rect::new(0, 0, scaled_video_width, scaled_video_height);
+        let roi = core::Rect::new(0, top_bar_height, scaled_video_width, scaled_video_height);
         let mut roi_mat = core::Mat::roi_mut(&mut canvas, roi)?;
         resized_frame.copy_to(&mut roi_mat)?;
 
         // --- Draw top bar ---
         draw_top_bar(&mut canvas, &data, full_width, top_bar_height)?;
 
-        // --- Draw bottom bar ---
-        draw_bottom_bar(&mut canvas, &frame_data, frame_idx, full_width, full_height, bottom_bar_height)?;
+        // --- Draw bottom bars ---
+        draw_bottom_bar(&mut canvas, &data, full_width, bottom_bar_height, top_bar_height)?;
 
-        // --- Draw right-side metrics ---
-        draw_right_bar(&mut canvas, &data, full_width, top_bar_height)?;
+        // --- Draw right metrics ---
+        draw_right_bar(&mut canvas, &data, width, top_bar_height)?;
 
         // --- Attention point ---
         let mut x = ((data.attention_center_x * scaled_video_width as f64 * movement_amplifier) as i32)
-            .clamp(scaled_video_width, full_width-1);
+            .clamp(0, full_width-1);
         let mut y = ((data.attention_center_y * scaled_video_height as f64 * movement_amplifier) as i32)
-            .clamp(0, scaled_video_height-1);
+            .clamp(0, full_height-1);
 
         x = ((0.7 * last_x as f64 + 0.3 * x as f64) as i32).clamp(0, full_width-1);
         y = ((0.7 * last_y as f64 + 0.3 * y as f64) as i32).clamp(0, full_height-1);
@@ -194,44 +192,114 @@ fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> R
     Ok(())
 }
 
-// --- Bottom Bar (Stacked bars for EMA and Percentiles) ---
-fn draw_bottom_bar(frame: &mut Mat, frame_data: &Vec<FrameData>, frame_idx: usize,
-                   width: i32, bottom_height: i32, top_bar_height: i32) -> Result<()> {
-    let y_start = frame.rows() - bottom_height; // remove the `?` here
-    let bar_width = 6; // width per bar
-    let spacing = 2;   // spacing between bars
+fn draw_bottom_bar(frame: &mut Mat, data: &FrameData, width: i32, bottom_height: i32, _top_bar_height: i32) -> Result<()> {
+    let y_start = frame.rows() - bottom_height;
+    let bar_height = 20;
+    let spacing = 10;
 
-    let data = &frame_data[frame_idx.min(frame_data.len()-1)];
+    // Max width per half of the video
+    let max_bar_width = width / 2 - 50; // 50px padding for label/numbers
 
-    // Values to visualize (scaled 0..1)
-    let values = [
+    // Left half values
+    let left_values = [
         data.visual_engagement_ema_1s_percentile,
         data.visual_engagement_ema_3s_percentile,
-        data.visual_engagement_ema_10s_percentile,
     ];
-
-    let colors = [
+    let left_colors = [
         core::Scalar::new(0.0, 255.0, 0.0, 0.0),   // EMA1s - Green
         core::Scalar::new(0.0, 255.0, 255.0, 0.0), // EMA3s - Yellow
-        core::Scalar::new(255.0, 0.0, 0.0, 0.0),   // EMA10s - Red
     ];
+    let left_labels = ["EMA1s", "EMA3s"];
 
-    for (i, &val) in values.iter().enumerate() {
-        let x = (frame_idx as i32 * (bar_width + spacing)) % width + i as i32 * bar_width;
-        let bar_h = (val * bottom_height as f64) as i32;
+    for (i, &val) in left_values.iter().enumerate() {
+        let bar_width = (val * max_bar_width as f64) as i32;
+        let y = y_start + i as i32 * (bar_height + spacing);
 
+        // Draw horizontal bar
         imgproc::rectangle(
             frame,
-            core::Rect::new(
-                x,
-                y_start + bottom_height - bar_h,
-                bar_width,
-                bar_h
-            ),
-            colors[i],
+            core::Rect::new(50, y, bar_width, bar_height),
+            left_colors[i],
             -1,
             imgproc::LINE_8,
             0
+        )?;
+
+        // Draw label
+        imgproc::put_text(
+            frame,
+            left_labels[i],
+            core::Point::new(5, y + bar_height - 4),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+            1,
+            imgproc::LINE_8,
+            false
+        )?;
+
+        // Draw numeric value
+        imgproc::put_text(
+            frame,
+            &format!("{:.2}", val),
+            core::Point::new(50 + bar_width + 5, y + bar_height - 4),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+            1,
+            imgproc::LINE_8,
+            false
+        )?;
+    }
+
+    // Right half values
+    let right_values = [
+        data.visual_engagement_ema_10s_percentile,
+    ];
+    let right_colors = [
+        core::Scalar::new(255.0, 0.0, 0.0, 0.0), // EMA10s - Red
+    ];
+    let right_labels = ["EMA10s"];
+
+    for (i, &val) in right_values.iter().enumerate() {
+        let bar_width = (val * max_bar_width as f64) as i32;
+        let y = y_start + (i + left_values.len()) as i32 * (bar_height + spacing);
+
+        // Draw horizontal bar on right half
+        let x_start = width / 2 + 50;
+        imgproc::rectangle(
+            frame,
+            core::Rect::new(x_start, y, bar_width, bar_height),
+            right_colors[i],
+            -1,
+            imgproc::LINE_8,
+            0
+        )?;
+
+        // Draw label
+        imgproc::put_text(
+            frame,
+            right_labels[i],
+            core::Point::new(x_start - 45, y + bar_height - 4),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+            1,
+            imgproc::LINE_8,
+            false
+        )?;
+
+        // Draw numeric value
+        imgproc::put_text(
+            frame,
+            &format!("{:.2}", val),
+            core::Point::new(x_start + bar_width + 5, y + bar_height - 4),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            0.5,
+            core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+            1,
+            imgproc::LINE_8,
+            false
         )?;
     }
 
@@ -240,10 +308,9 @@ fn draw_bottom_bar(frame: &mut Mat, frame_data: &Vec<FrameData>, frame_idx: usiz
 
 
 
-// --- Right Bar ---
-fn draw_right_bar(frame: &mut Mat, data: &FrameData,
-                  width: i32, top_bar_height: i32) -> Result<()> {
-    let x_start = width - 300;
+// --- Right Metrics Panel ---
+fn draw_right_bar(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height: i32) -> Result<()> {
+    let x_start = width;
     let mut y = top_bar_height;
     let line_height = 20;
 
@@ -257,17 +324,9 @@ fn draw_right_bar(frame: &mut Mat, data: &FrameData,
         format!("Saliency Entropy: {:.2}", data.saliency_entropy),
         format!("Saliency Change Rate: {:.2}", data.saliency_change_rate),
         format!("Attention X/Y: {:.2}/{:.2}", data.attention_center_x, data.attention_center_y),
-        format!("Attention Concentration: {:.2}", data.attention_concentration),
-        format!("Attention Shift Rate: {:.2}", data.attention_shift_rate),
-        format!("Visual Engagement Score: {:.2}", data.visual_engagement_score),
-        format!("EMA 1s: {:.2}", data.visual_engagement_ema_1s),
-        format!("EMA 3s: {:.2}", data.visual_engagement_ema_3s),
-        format!("EMA 10s: {:.2}", data.visual_engagement_ema_10s),
-        format!("EMA 1s Percentile: {:.2}", data.visual_engagement_ema_1s_percentile),
-        format!("EMA 3s Percentile: {:.2}", data.visual_engagement_ema_3s_percentile),
-        format!("EMA 10s Percentile: {:.2}", data.visual_engagement_ema_10s_percentile),
-        format!("Variance 1s: {:.2}", data.visual_engagement_variance_1s),
-        format!("Variance 5s: {:.2}", data.visual_engagement_variance_5s),
+        format!("Visual Engagement EMA1s: {:.2}", data.visual_engagement_ema_1s),
+        format!("Visual Engagement EMA3s: {:.2}", data.visual_engagement_ema_3s),
+        format!("Visual Engagement EMA10s: {:.2}", data.visual_engagement_ema_10s),
     ];
 
     for text in &metrics {
