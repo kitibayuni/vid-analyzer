@@ -133,18 +133,24 @@ else
                     # Generate CSV features
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" rms
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" zcr
-                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" pitch       # <-- restored pitch CSV
+                    run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" pitch
                     run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" spectral
                     run_process "$OUT22" "$OUTDIR/${BASE_DEMUCS}" formant
                     run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" jitter
 
                     # --- Post-process RMS CSV ---
                     RMS_CSV="$OUTDIR/${BASE_DEMUCS}_rms.csv"
-                    [ -f "$RMS_CSV" ] && ./rms_energy_process "$RMS_CSV" --time_col time_sec
+                    if [ -f "$RMS_CSV" ]; then
+                        ./rms_energy_process "$RMS_CSV" --time_col time_sec
+                        rm -f "$RMS_CSV"
+                    fi
 
                     # --- Post-process Pitch CSV ---
                     PITCH_CSV="$OUTDIR/${BASE_DEMUCS}_pitch.csv"
-                    [ -f "$PITCH_CSV" ] && ./pitch_process "$PITCH_CSV" --time_col time_sec
+                    if [ -f "$PITCH_CSV" ]; then
+                        ./pitch_process "$PITCH_CSV" --time_col time_sec
+                        rm -f "$PITCH_CSV"
+                    fi
 
                     # --- Post-process Formant CSV ---
                     FORMANT_CSV="$OUTDIR/${BASE_DEMUCS}_formant.csv"
@@ -154,39 +160,33 @@ else
                         rm -f "$FORMANT_CSV"
                     fi
 
-                    # --- NEW: Post-process Spectral CSV ---
+                    # --- Post-process Spectral CSV ---
                     SPECTRAL_CSV="$OUTDIR/${BASE_DEMUCS}_spectral.csv"
                     if [ -f "$SPECTRAL_CSV" ]; then
                         echo "Processing spectral CSV: $SPECTRAL_CSV"
                         ./spectrals_process "$SPECTRAL_CSV"
                         echo "✓ Spectral processing complete"
+                        rm -f "$SPECTRAL_CSV"
                     fi
 
-                    # --- NEW: Emotion preprocessing and analysis ---
+                    # --- Emotion preprocessing and analysis ---
                     echo "Processing emotions for $BASE_DEMUCS..."
                     EMOTION_NPY="$OUTDIR/${BASE_DEMUCS}_emotion.npy"
                     EMOTION_CSV="$OUTDIR/${BASE_DEMUCS}_emotion_processed.csv"
-                    
-                    # Pre-process emotions (16kHz input, target_sr=16000)
-                    echo "Pre-processing emotions: $OUT16 -> $EMOTION_NPY"
+
                     ./pre-process_emotions "$OUT16" "$EMOTION_NPY" 16000
-                    
-                    # Process emotions
                     if [ -f "$EMOTION_NPY" ]; then
-                        echo "Processing emotions: $EMOTION_NPY -> $EMOTION_CSV"
-                        python process_emotion.py "$EMOTION_NPY" "$EMOTION_CSV" --chunk_sec 5
-                        echo "✓ Emotion processing complete"
-                        # Clean up intermediate .npy file
+                        python process_emotion.py "$EMOTION_NPY" "$EMOTION_CSV" --chunk_sec 5 \
+                            --msp_model_path "./models/wav2vec2-large-robust-12-ft-emotion-msp-dim" \
+                            --device "cuda"
                         rm -f "$EMOTION_NPY"
-                    else
-                        echo "✗ Emotion preprocessing failed - no .npy file generated"
                     fi
+
 
                     # --- Transcript ---
                     TRANSCRIPT_OUT="$OUTDIR/${BASE_DEMUCS}_transcript.csv"
                     python process_transcript.py "$OUT16" --output "$TRANSCRIPT_OUT"
-                    
-                    # --- NEW: Enhanced transcript processing with lexicons ---
+
                     if [ -f "$TRANSCRIPT_OUT" ]; then
                         echo "Processing transcript with lexicons..."
                         TRANSCRIPT_PROCESSED="$OUTDIR/${BASE_DEMUCS}_transcript_processed.csv"
@@ -197,49 +197,41 @@ else
                             lexicons/WW-Lex-v1.csv \
                             lexicons/swears.txt
                         echo "✓ Transcript lexicon processing complete"
+                        rm -f "$TRANSCRIPT_OUT"
                     fi
                     
                 else
                     # --- Process features for NONVOCALS ---
                     echo "Processing features for $BASE_DEMUCS (nonvocals)..."
 
-                    # Generate CSV features
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" rms
                     run_process "$OUT16" "$OUTDIR/${BASE_DEMUCS}" zcr
                     run_process "$OUT44" "$OUTDIR/${BASE_DEMUCS}" spectral
 
-                    # --- Post-process RMS CSV ---
                     RMS_CSV="$OUTDIR/${BASE_DEMUCS}_rms.csv"
                     if [ -f "$RMS_CSV" ]; then
                         ./rms_energy_process "$RMS_CSV" --time_col time_sec
-                        # Keep only processed version, remove intermediate
                         rm -f "$RMS_CSV"
                     fi
 
-                    # --- Post-process ZCR CSV ---
                     ZCR_CSV="$OUTDIR/${BASE_DEMUCS}_zcr.csv"
                     if [ -f "$ZCR_CSV" ]; then
                         ./zcr_process "$ZCR_CSV" --time_col time_sec
-                        # Keep only processed version, remove intermediate
                         rm -f "$ZCR_CSV"
                     fi
                     
-                    # --- NEW: Post-process Spectral CSV for nonvocals too ---
                     SPECTRAL_CSV="$OUTDIR/${BASE_DEMUCS}_spectral.csv"
                     if [ -f "$SPECTRAL_CSV" ]; then
                         echo "Processing spectral CSV: $SPECTRAL_CSV"
                         ./spectrals_process "$SPECTRAL_CSV"
                         echo "✓ Spectral processing complete"
-                        # Keep only processed version, remove intermediate
                         rm -f "$SPECTRAL_CSV"
                     fi
                 fi
 
-                # --- Delete intermediate WAVs ---
                 rm -f "$DEMUCS_FILE" "$OUT16" "$OUT22" "$OUT44"
             done
 
-            # --- Delete the extracted audio once Demucs variants exist ---
             rm -f "$OUTFILE"
         else
             echo "Skipping mostly silent audio stream $STREAM_INDEX"
@@ -261,23 +253,20 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
         OUTFILE="$OUTDIR/${BASENAME}_video${STREAM_INDEX}.mp4"
         SALIENCE_OUT="$OUTDIR/${BASENAME}_video${STREAM_INDEX}_salience.csv"
 
-        # Re-encode video
         ffmpeg -y -i "$INPUT" -map 0:v:$STREAM_INDEX -an -vf "fps=15,scale=224:224" \
             -c:v libx264 -preset fast -crf 16 "$OUTFILE"
         echo "✓ Video stream re-encoded to $OUTFILE"
 
-        # Run DeepGaze salience extraction
         echo "Running DeepGaze on $OUTFILE -> $SALIENCE_OUT"
         python deepgaze.py "$OUTFILE" "$SALIENCE_OUT"
 
-        # --- NEW: Process salience CSV ---
         if [ -f "$SALIENCE_OUT" ]; then
             echo "Processing salience CSV: $SALIENCE_OUT"
             ./salience_process "$SALIENCE_OUT" --time_col time_sec
             echo "✓ Salience processing complete"
+            rm -f "$SALIENCE_OUT"
         fi
 
-        # Cleanup
         rm -f "$OUTFILE"
         echo "✓ Cleaned up $OUTFILE"
     done

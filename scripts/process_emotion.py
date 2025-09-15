@@ -1,53 +1,57 @@
 import argparse
 import numpy as np
 import torch
+import torch.nn.functional as F
 import pandas as pd
-from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+import tempfile
+import os
+import soundfile as sf
+from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtractor
+from speechbrain.inference.interfaces import foreign_class
 
-def map_to_emotion_from_msp(valence, arousal):
-    """Optional derived emotion from MSP-Dim (if you want both sources)"""
-    if valence >= 0.3 and arousal >= 0.3:
-        return "happy"
-    elif valence <= -0.3 and arousal >= 0.3:
-        return "angry"
-    elif valence <= -0.3 and arousal <= -0.3:
-        return "sad"
-    elif valence >= 0.3 and arousal <= -0.3:
-        return "calm"
-    else:
-        return "neutral"
-
-def main(
-    input_file: str,
-    output_file: str,
-    chunk_sec: float = 5.0,
-    msp_model_path: str = "./models/audeering-msp-dim",
-    cat_model_path: str = "./models/ehcalabres-emotion-categorical"
-):
+def main(input_file, output_file, chunk_sec=5, msp_model_path=None, device='cpu'):
     # -------------------------------
-    # Load preprocessed audio
+    # Load audio
     # -------------------------------
     audio = np.load(input_file)
-    sr = 16000  # all models expect 16kHz
-
+    sr = 16000
     if audio.ndim == 2:
-        print(f"Converting stereo audio {audio.shape} to mono")
         audio = np.mean(audio, axis=0)
-    print(f"Audio shape after conversion: {audio.shape}, duration: {len(audio)/sr:.2f}s")
+    print(f"Audio shape: {audio.shape}, duration: {len(audio)/sr:.2f}s")
 
     # -------------------------------
-    # Load models
+    # Load MSP-Dim model for VAD
     # -------------------------------
-    print(f"Loading MSP-Dim model from {msp_model_path}...")
-    msp_extractor = AutoFeatureExtractor.from_pretrained(msp_model_path)
-    msp_model = AutoModelForAudioClassification.from_pretrained(msp_model_path)
-    print(f"Loading categorical emotion model from {cat_model_path}...")
-    cat_extractor = AutoFeatureExtractor.from_pretrained(cat_model_path)
-    cat_model = AutoModelForAudioClassification.from_pretrained(cat_model_path)
+    msp_model = None
+    msp_feature_extractor = None
+    if msp_model_path:
+        print(f"Loading MSP-Dim model from {msp_model_path}...")
+        try:
+            msp_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(msp_model_path)
+            msp_model = Wav2Vec2ForSequenceClassification.from_pretrained(msp_model_path)
+            msp_model.to(device)
+            msp_model.eval()
+            print("MSP-Dim model loaded successfully")
+        except Exception as e:
+            print(f"Error loading MSP-Dim model: {e}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    msp_model.to(device).eval()
-    cat_model.to(device).eval()
+    # -------------------------------
+    # Load SpeechBrain categorical model
+    # -------------------------------
+    print("Loading SpeechBrain categorical emotion model...")
+    sb_model = None
+    try:
+        sb_model = foreign_class(
+            source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
+            pymodule_file="custom_interface.py",
+            classname="CustomEncoderWav2vec2Classifier",
+            savedir="tmp_speechbrain_model",
+            run_opts={"device": device}
+        )
+        print("SpeechBrain model loaded successfully")
+    except Exception as e:
+        print(f"Error loading SpeechBrain model: {e}")
+        sb_model = None
 
     # -------------------------------
     # Chunk audio
@@ -57,60 +61,146 @@ def main(
     print(f"Total chunks: {len(chunks)}, chunk size: {chunk_samples} samples (~{chunk_sec}s)")
 
     # -------------------------------
-    # Run inference per chunk
+    # Prepare output
     # -------------------------------
-    cat_labels = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]  # ehcalabres model
+    output_rows = []
 
-    chunk_scores = []
     for i, chunk in enumerate(chunks):
         if len(chunk) == 0:
             continue
+
+        # Pad short chunks
         if len(chunk) < 1600:
             chunk = np.pad(chunk, (0, 1600 - len(chunk)), mode='constant')
 
-        # MSP-Dim inference
-        msp_inputs = msp_extractor(chunk, sampling_rate=sr, return_tensors="pt", padding=True)
-        msp_inputs = {k: v.to(device) for k, v in msp_inputs.items()}
-        with torch.no_grad():
-            msp_logits = msp_model(**msp_inputs).logits
-        valence, arousal, dominance = msp_logits.cpu().numpy()[0]
-
-        # Categorical inference
-        cat_inputs = cat_extractor(chunk, sampling_rate=sr, return_tensors="pt", padding=True)
-        cat_inputs = {k: v.to(device) for k, v in cat_inputs.items()}
-        with torch.no_grad():
-            cat_logits = cat_model(**cat_inputs).logits
-        cat_probs = torch.softmax(cat_logits, dim=-1)[0].cpu().numpy()
-        cat_index = int(np.argmax(cat_probs))
-        predicted_emotion = cat_labels[cat_index]
-
-        chunk_scores.append({
+        row = {
             "chunk_index": i,
             "start_sec": i * chunk_sec,
-            "end_sec": min((i + 1) * chunk_sec, len(audio)/sr),
-            "valence": float(valence),
-            "arousal": float(arousal),
-            "dominance": float(dominance),
-            "msp_derived_emotion": map_to_emotion_from_msp(valence, arousal),
-            "categorical_emotion": predicted_emotion,
-            "cat_probs": cat_probs.tolist()
-        })
+            "end_sec": min((i+1) * chunk_sec, len(audio)/sr)
+        }
+
+        # -------------------------------
+        # MSP-Dim VAD inference
+        # -------------------------------
+        if msp_model is not None and msp_feature_extractor is not None:
+            try:
+                inputs = msp_feature_extractor(chunk, sampling_rate=sr, return_tensors="pt", padding=True)
+                input_values = inputs.input_values.to(device)
+                with torch.no_grad():
+                    logits = msp_model(input_values).logits
+                probs = F.softmax(logits, dim=-1)[0]
+                # MSP-Dim outputs: valence, arousal, dominance
+                row.update({
+                    "valence": float(probs[0]),
+                    "arousal": float(probs[1]),
+                    "dominance": float(probs[2])
+                })
+            except Exception as e:
+                print(f"Error processing chunk {i} with MSP-Dim model: {e}")
+                row.update({
+                    "valence": 0.0,
+                    "arousal": 0.0,
+                    "dominance": 0.0
+                })
+        else:
+            row.update({
+                "valence": 0.0,
+                "arousal": 0.0,
+                "dominance": 0.0
+            })
+
+        # -------------------------------
+        # SpeechBrain categorical emotions
+        # -------------------------------
+        if sb_model is not None:
+            try:
+                # Ensure chunk is float32 and properly normalized
+                chunk_normalized = chunk.astype(np.float32)
+                if np.max(np.abs(chunk_normalized)) > 1.0:
+                    chunk_normalized = chunk_normalized / np.max(np.abs(chunk_normalized))
+                
+                # Create temporary wav file
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
+                    sf.write(temp_wav.name, chunk_normalized, sr)
+                    temp_wav_path = temp_wav.name
+                
+                # Get emotion prediction
+                with torch.no_grad():
+                    out_prob, score, index, text_lab = sb_model.classify_file(temp_wav_path)
+                
+                # Clean up temp file
+                os.unlink(temp_wav_path)
+                
+                # Process probabilities
+                if isinstance(out_prob, torch.Tensor):
+                    probs = out_prob.detach().cpu().numpy()
+                else:
+                    probs = np.array(out_prob)
+                
+                if len(probs.shape) > 1:
+                    probs = probs.squeeze()
+                
+                # IEMOCAP labels in model order: neu, hap, ang, sad
+                iemocap_labels = ['neu', 'hap', 'ang', 'sad']
+                
+                # Add emotion probabilities
+                for j, label in enumerate(iemocap_labels):
+                    row[f"cat_{label}"] = float(probs[j]) if j < len(probs) else 0.0
+                
+                # Add predicted emotion and confidence
+                predicted_emotion = str(text_lab[0]) if isinstance(text_lab, list) else str(text_lab)
+                predicted_emotion = predicted_emotion.strip("[]'\"")  # Clean up formatting
+                
+                row["predicted_emotion"] = predicted_emotion
+                row["confidence"] = float(score.item()) if isinstance(score, torch.Tensor) else float(score)
+                
+            except Exception as e:
+                print(f"Error processing chunk {i} with SpeechBrain model: {e}")
+                # Add default emotion categories
+                for label in ['neu', 'hap', 'ang', 'sad']:
+                    row[f"cat_{label}"] = 0.0
+                row["predicted_emotion"] = "unknown"
+                row["confidence"] = 0.0
+        else:
+            # If SpeechBrain model failed to load, add default categories
+            for label in ['neu', 'hap', 'ang', 'sad']:
+                row[f"cat_{label}"] = 0.0
+            row["predicted_emotion"] = "unknown" 
+            row["confidence"] = 0.0
+
+        output_rows.append(row)
+        
+        # Print progress every 50 chunks
+        if (i + 1) % 50 == 0:
+            print(f"Processed {i + 1}/{len(chunks)} chunks...")
 
     # -------------------------------
-    # Save results
+    # Save CSV
     # -------------------------------
-    df_scores = pd.DataFrame(chunk_scores)
-    df_scores.to_csv(output_file, index=False)
+    df = pd.DataFrame(output_rows)
+    df.to_csv(output_file, index=False)
     print(f"Saved combined emotion scores per chunk to {output_file}")
+    print(f"Output shape: {df.shape}")
+    print(f"Columns: {list(df.columns)}")
+    
+    # Print summary statistics
+    if 'predicted_emotion' in df.columns:
+        print(f"Emotion distribution:")
+        print(df['predicted_emotion'].value_counts())
+    
+    if 'confidence' in df.columns:
+        print(f"Average confidence: {df['confidence'].mean():.3f}")
 
-
+# -------------------------------
+# CLI
+# -------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MSP-Dim + Categorical emotion detection (local, offline)")
-    parser.add_argument("input_file", type=str, help="Path to input .npy audio file")
-    parser.add_argument("output_file", type=str, help="Path to output CSV file")
-    parser.add_argument("--chunk_sec", type=float, default=5.0, help="Chunk duration in seconds")
-    parser.add_argument("--msp_model_path", type=str, default="./models/audeering-msp-dim", help="Local MSP-Dim model folder")
-    parser.add_argument("--cat_model_path", type=str, default="./models/ehcalabres-emotion-categorical", help="Local categorical model folder")
-
+    parser = argparse.ArgumentParser(description="Chunked MSP-Dim + SpeechBrain emotion analysis")
+    parser.add_argument("input_file", type=str)
+    parser.add_argument("output_file", type=str)
+    parser.add_argument("--chunk_sec", type=float, default=5.0)
+    parser.add_argument("--msp_model_path", type=str, default=None)
+    parser.add_argument("--device", type=str, default="cpu")
     args = parser.parse_args()
-    main(args.input_file, args.output_file, args.chunk_sec, args.msp_model_path, args.cat_model_path)
+
+    main(args.input_file, args.output_file, args.chunk_sec, args.msp_model_path, args.device)
