@@ -194,34 +194,51 @@ fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> R
     Ok(())
 }
 
-// --- Bottom Bar ---
+// --- Bottom Bar (Stacked bars for EMA and Percentiles) ---
 fn draw_bottom_bar(frame: &mut Mat, frame_data: &Vec<FrameData>, frame_idx: usize,
-                   width: i32, height: i32, bottom_bar_height: i32) -> Result<()> {
-    let y_start = height - bottom_bar_height;
-    let colors = [
-        core::Scalar::new(0.0, 255.0, 0.0, 0.0), // EMA 1s
-        core::Scalar::new(0.0, 255.0, 255.0, 0.0), // EMA 3s
-        core::Scalar::new(255.0, 0.0, 0.0, 0.0), // EMA 10s
+                   width: i32, bottom_height: i32, top_bar_height: i32) -> Result<()> {
+    let y_start = frame.rows() - bottom_height; // remove the `?` here
+    let bar_width = 6; // width per bar
+    let spacing = 2;   // spacing between bars
+
+    let data = &frame_data[frame_idx.min(frame_data.len()-1)];
+
+    // Values to visualize (scaled 0..1)
+    let values = [
+        data.visual_engagement_ema_1s_percentile,
+        data.visual_engagement_ema_3s_percentile,
+        data.visual_engagement_ema_10s_percentile,
     ];
-    for (i, &color) in colors.iter().enumerate() {
-        let x = frame_idx as i32 % width;
-        let value = match i {
-            0 => frame_data[frame_idx.min(frame_data.len()-1)].visual_engagement_ema_1s,
-            1 => frame_data[frame_idx.min(frame_data.len()-1)].visual_engagement_ema_3s,
-            2 => frame_data[frame_idx.min(frame_data.len()-1)].visual_engagement_ema_10s,
-            _ => 0.0
-        };
-        let bar_h = (value * bottom_bar_height as f64) as i32;
-        imgproc::line(frame,
-                      core::Point::new(x, y_start + bottom_bar_height),
-                      core::Point::new(x, y_start + bottom_bar_height - bar_h),
-                      color,
-                      2,
-                      imgproc::LINE_8,
-                      0)?;
+
+    let colors = [
+        core::Scalar::new(0.0, 255.0, 0.0, 0.0),   // EMA1s - Green
+        core::Scalar::new(0.0, 255.0, 255.0, 0.0), // EMA3s - Yellow
+        core::Scalar::new(255.0, 0.0, 0.0, 0.0),   // EMA10s - Red
+    ];
+
+    for (i, &val) in values.iter().enumerate() {
+        let x = (frame_idx as i32 * (bar_width + spacing)) % width + i as i32 * bar_width;
+        let bar_h = (val * bottom_height as f64) as i32;
+
+        imgproc::rectangle(
+            frame,
+            core::Rect::new(
+                x,
+                y_start + bottom_height - bar_h,
+                bar_width,
+                bar_h
+            ),
+            colors[i],
+            -1,
+            imgproc::LINE_8,
+            0
+        )?;
     }
+
     Ok(())
 }
+
+
 
 // --- Right Bar ---
 fn draw_right_bar(frame: &mut Mat, data: &FrameData,
