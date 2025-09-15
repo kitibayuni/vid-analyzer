@@ -83,10 +83,14 @@ fn main() -> Result<()> {
     // Attention smoothing and trail
     let mut last_x = scaled_video_width / 2; // Initialize to center
     let mut last_y = scaled_video_height / 2 + top_bar_height; // Initialize to center + offset
-    let movement_amplifier = 8.0; // Increased from 3.0 for more dramatic movement
+    let movement_amplifier = 20.0; // Increased from 3.0 for more dramatic movement
     let jitter_max = 0.08; // Increased from 0.03 for more jitter
     let trail_length = 15; // Increased from 10 for longer trail
     let mut trail: Vec<(i32, i32)> = Vec::new();
+
+    // Dynamic center calculation for 5-second windows
+    let window_duration = 5.0; // 5 seconds
+    let mut current_window_start = 0.0;
 
     let mut frame_idx = 0;
     loop {
@@ -101,6 +105,24 @@ fn main() -> Result<()> {
                 .partial_cmp(&(b.time_sec - current_time).abs()).unwrap())
             .unwrap()
             .clone();
+
+        // Calculate dynamic center based on 5-second window average
+        let window_start_time = (current_time / window_duration).floor() * window_duration;
+        let window_end_time = window_start_time + window_duration;
+        
+        // Find all data points in current 5-second window
+        let window_data: Vec<&FrameData> = frame_data.iter()
+            .filter(|d| d.time_sec >= window_start_time && d.time_sec < window_end_time)
+            .collect();
+        
+        // Calculate average attention position for this window
+        let (avg_attention_x, avg_attention_y) = if !window_data.is_empty() {
+            let sum_x: f64 = window_data.iter().map(|d| d.attention_center_x).sum();
+            let sum_y: f64 = window_data.iter().map(|d| d.attention_center_y).sum();
+            (sum_x / window_data.len() as f64, sum_y / window_data.len() as f64)
+        } else {
+            (0.5, 0.5) // Default to center if no data
+        };
 
         // Create canvas
         let mut canvas = Mat::zeros(full_height, full_width, frame.typ())?.to_mat()?;
@@ -126,17 +148,18 @@ fn main() -> Result<()> {
         draw_bottom_bar(&mut canvas, &data, full_width, bottom_bar_height, top_bar_height)?;
         draw_right_bar(&mut canvas, &data, width, top_bar_height)?;
 
-        // --- Calculate attention point coordinates (relative to the resized video area) ---
-        // Center the coordinate system and allow full range across the video
+        // --- Calculate attention point coordinates with dynamic centering ---
+        // Use the 5-second window average as the "center" instead of 0.5, 0.5
         let center_x = scaled_video_width / 2;
         let center_y = scaled_video_height / 2;
         
-        // Map attention coordinates from [0,1] to [-0.5, 0.5] for centering, then scale to video dimensions
-        let attention_x_centered = (data.attention_center_x - 0.5) * movement_amplifier;
-        let attention_y_centered = (data.attention_center_y - 0.5) * movement_amplifier;
+        // Calculate offset from the window's average attention point
+        let attention_x_offset = (data.attention_center_x - avg_attention_x) * movement_amplifier;
+        let attention_y_offset = (data.attention_center_y - avg_attention_y) * movement_amplifier;
         
-        let mut x = (center_x as f64 + attention_x_centered * scaled_video_width as f64) as i32;
-        let mut y = (center_y as f64 + attention_y_centered * scaled_video_height as f64) as i32;
+        // Apply offset to the video center
+        let mut x = (center_x as f64 + attention_x_offset * scaled_video_width as f64) as i32;
+        let mut y = (center_y as f64 + attention_y_offset * scaled_video_height as f64) as i32;
         
         // Clamp to video bounds
         x = x.clamp(0, scaled_video_width-1);
@@ -168,19 +191,19 @@ fn main() -> Result<()> {
                 core::Point::new(tx, ty),
                 radius,
                 core::Scalar::new(255.0 * alpha, 100.0 * alpha, 0.0, 0.0), // Orange to red gradient
-                1, // Changed from 2 to 1-2 pixel width
+                1, // Thin 1 pixel width for trail
                 imgproc::LINE_8,
                 0
             )?;
         }
 
-        // --- Draw current attention dot (hollow outer ring only) ---
+        // --- Draw ONLY the yellow hollow outer ring ---
         imgproc::circle(
             &mut canvas,
             core::Point::new(x, y),
-            25, // Outer ring radius
-            core::Scalar::new(255.0, 255.0, 0.0, 0.0), // Yellow color
-            2, // 1-2 pixel width hollow ring
+            25, // Radius
+            core::Scalar::new(0.0, 255.0, 255.0, 0.0), // Yellow color (BGR format: Blue=0, Green=255, Red=255)
+            2, // 2 pixel width hollow ring
             imgproc::LINE_8,
             0
         )?;
