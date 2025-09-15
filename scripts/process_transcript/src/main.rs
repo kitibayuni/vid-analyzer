@@ -301,8 +301,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     out_headers.extend(all_features.iter().map(|s| s.as_str()));
     out_headers.extend(&[
         "swears", // New column for swear detection
-        "engagement_score","negativity_score","positivity_score",
-        "engagement_ema_1s","engagement_ema_5s","engagement_ema_10s"
+        "transc_engage_score","negativity_score","positivity_score",
+        "transc_engage_ema_1s","transc_engage_ema_5s","transc_engage_ema_10s"
     ]);
     wtr.write_record(&out_headers)?;
 

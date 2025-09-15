@@ -9,7 +9,7 @@ const FEATURES: &[&str] = &[
     "jitter_local", "jitter_ppq5", "shimmer_local", "shimmer_apq5",
     "hnr", "vfeats_engage_score",
     "vfeats_engage_ema_1s", "vfeats_engage_ema_5s", "vfeats_engage_ema_10s",
-    "vfeats_engage_ema_1s_percentile", "vfeats_engage_ema_5s_percentile", "vfeats_engage_ema_10s_percentile"
+    "vfeats_engage_ema_1s_pct", "vfeats_engage_ema_5s_pct", "vfeats_engage_ema_10s_pct"
 ];
 
 #[derive(Default)]
@@ -235,9 +235,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         channel_data.insert("vfeats_engage_ema_5s".to_string(), ema_5s.clone());
         channel_data.insert("vfeats_engage_ema_10s".to_string(), ema_10s.clone());
 
-        channel_data.insert("vfeats_engage_ema_1s_percentile".to_string(), percentile_rank(&ema_1s));
-        channel_data.insert("vfeats_engage_ema_5s_percentile".to_string(), percentile_rank(&ema_5s));
-        channel_data.insert("vfeats_engage_ema_10s_percentile".to_string(), percentile_rank(&ema_10s));
+        channel_data.insert("vfeats_engage_ema_1s_pct".to_string(), percentile_rank(&ema_1s));
+        channel_data.insert("vfeats_engage_ema_5s_pct".to_string(), percentile_rank(&ema_5s));
+        channel_data.insert("vfeats_engage_ema_10s_pct".to_string(), percentile_rank(&ema_10s));
         final_results.insert(ch.clone(), channel_data);
     }
 
