@@ -153,8 +153,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let flux = feature_series.get("flux").unwrap_or(&empty_flux);
         let flatness = feature_series.get("flatness").unwrap_or(&empty_flatness);
 
-        // Compute engagement score
-        let engagement: Vec<f64> = (0..n)
+        // Compute spectral_engage score
+        let spectral_engage: Vec<f64> = (0..n)
             .map(|i| {
                 W_CENTROID * centroid[i]
                     + W_BANDWIDTH * bandwidth[i]
@@ -170,10 +170,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         channel_data.insert("bandwidth".to_string(), bandwidth.clone());
         channel_data.insert("flux".to_string(), flux.clone());
         channel_data.insert("flatness".to_string(), flatness.clone());
-        channel_data.insert("engagement".to_string(), engagement.clone());
+        channel_data.insert("spectral_engage".to_string(), spectral_engage.clone());
 
-        // For each feature + engagement: compute EMA + percentile
-        let feats = vec!["centroid", "bandwidth", "flux", "flatness", "engagement"];
+        // For each feature + spectral_engage: compute EMA + percentile
+        let feats = vec!["centroid", "bandwidth", "flux", "flatness", "spectral_engage"];
         for f in feats {
             if let Some(vals) = channel_data.get(f).cloned() {
                 let ema1 = ema(&vals, alpha_1s);
@@ -207,7 +207,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "bandwidth",
             "flux",
             "flatness",
-            "engagement",
+            "spectral_engage",
             "centroid_ema_1s",
             "centroid_ema_5s",
             "centroid_ema_10s",
@@ -232,12 +232,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             "flatness_ema_1s_pct",
             "flatness_ema_5s_pct",
             "flatness_ema_10s_pct",
-            "engagement_ema_1s",
-            "engagement_ema_5s",
-            "engagement_ema_10s",
-            "engagement_ema_1s_pct",
-            "engagement_ema_5s_pct",
-            "engagement_ema_10s_pct",
+            "spectral_engage_ema_1s",
+            "spectral_engage_ema_5s",
+            "spectral_engage_ema_10s",
+            "spectral_engage_ema_1s_pct",
+            "spectral_engage_ema_5s_pct",
+            "spectral_engage_ema_10s_pct",
         ];
         for f in feats {
             out_headers.push(format!("{}_{}", ch, f));

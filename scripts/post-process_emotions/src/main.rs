@@ -145,19 +145,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write output
     let input_file = Path::new(input_path);
     let output_path = input_file.with_file_name(format!(
-        "{}_engagement.csv",
+        "{}_emo_engage.csv",
         input_file.file_stem().unwrap().to_string_lossy()
     ));
     let mut wtr = WriterBuilder::new().from_path(&output_path)?;
 
     let mut new_headers = headers.clone();
     let engagement_features = [
-        "emotion_engagement_score",
-        "emotion_engagement_ema_1s",
-        "emotion_engagement_ema_5s",
-        "emotion_engagement_ema_10s",
-        "emotion_engagement_percentile",
-        "emotion_engagement_variance_5s",
+        "emotion_engage_score",
+        "emotion_engage_ema_1s",
+        "emotion_engage_ema_5s",
+        "emotion_engage_ema_10s",
+        "emotion_engage_percentile",
+        "emotion_engage_variance_5s",
     ];
     for feat in &engagement_features {
         new_headers.push_field(feat);

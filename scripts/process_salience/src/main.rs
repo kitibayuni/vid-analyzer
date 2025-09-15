@@ -234,15 +234,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write headers
     let mut new_headers = headers.clone();
     let engagement_features = [
-        "visual_engagement_score",
-        "visual_engagement_ema_1s", 
-        "visual_engagement_ema_3s",
-        "visual_engagement_ema_10s",
-        "visual_engagement_ema_1s_percentile",
-        "visual_engagement_ema_3s_percentile", 
-        "visual_engagement_ema_10s_percentile",
-        "visual_engagement_variance_1s",
-        "visual_engagement_variance_5s"
+        "visual_engage_score",
+        "visual_engage_ema_1s", 
+        "visual_engage_ema_3s",
+        "visual_engage_ema_10s",
+        "visual_engage_ema_1s_pct",
+        "visual_engage_ema_3s_pct", 
+        "visual_engage_ema_10s_pct",
+        "visual_engage_variance_1s",
+        "visual_engage_variance_5s"
     ];
     
     for feat in &engagement_features {

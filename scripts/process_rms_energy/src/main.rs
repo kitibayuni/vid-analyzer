@@ -131,9 +131,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         col_map.insert("rms_energy_engage_ema_1s".to_string(), ema(&engagement_norm, alpha_1s));
         col_map.insert("rms_energy_engage_ema_5s".to_string(), ema(&engagement_norm, alpha_5s));
         col_map.insert("rms_energy_engage_ema_10s".to_string(), ema(&engagement_norm, alpha_10s));
-        col_map.insert("rms_energy_engage_ema_1s_percentile".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_1s"]));
-        col_map.insert("rms_energy_engage_ema_5s_percentile".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_5s"]));
-        col_map.insert("rms_energy_engage_ema_10s_percentile".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_10s"]));
+        col_map.insert("rms_energy_engage_ema_1s_pct".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_1s"]));
+        col_map.insert("rms_energy_engage_ema_5s_pct".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_5s"]));
+        col_map.insert("rms_energy_engage_ema_10s_pct".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_10s"]));
 
         outputs.insert(ch.clone(), col_map);
     }
@@ -154,9 +154,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             "rms_energy_engage_ema_1s",
             "rms_energy_engage_ema_5s",
             "rms_energy_engage_ema_10s",
-            "rms_energy_engage_ema_1s_percentile",
-            "rms_energy_engage_ema_5s_percentile",
-            "rms_energy_engage_ema_10s_percentile"
+            "rms_energy_engage_ema_1s_pct",
+            "rms_energy_engage_ema_5s_pct",
+            "rms_energy_engage_ema_10s_pct"
         ] {
             new_headers.push_field(&format!("{}_{}", ch, feat));
         }
@@ -173,9 +173,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "rms_energy_engage_ema_1s",
                 "rms_energy_engage_ema_5s",
                 "rms_energy_engage_ema_10s",
-                "rms_energy_engage_ema_1s_percentile",
-                "rms_energy_engage_ema_5s_percentile",
-                "rms_energy_engage_ema_10s_percentile"
+                "rms_energy_engage_ema_1s_pct",
+                "rms_energy_engage_ema_5s_pct",
+                "rms_energy_engage_ema_10s_pct"
             ] {
                 row.push(feats.get(*feat_name).unwrap()[i].to_string());
             }
