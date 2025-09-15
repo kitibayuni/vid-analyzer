@@ -19,10 +19,9 @@ fn ema(values: &[f64], alpha: f64) -> Vec<f64> {
 
 /// First derivative
 fn derivative(values: &[f64]) -> Vec<f64> {
-    let mut result = Vec::with_capacity(values.len());
-    result.push(0.0);
+    let mut result = vec![0.0; values.len()];
     for i in 1..values.len() {
-        result.push(values[i] - values[i - 1]);
+        result[i] = values[i] - values[i - 1];
     }
     result
 }
@@ -39,20 +38,9 @@ fn rolling_variance(values: &[f64], window: usize) -> Vec<f64> {
         let start = if i >= window { i + 1 - window } else { 0 };
         let window_slice = &values[start..=i];
         let mean = window_slice.iter().sum::<f64>() / window_slice.len() as f64;
-        let v = window_slice
-            .iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / window_slice.len() as f64;
-        var[i] = v;
+        var[i] = window_slice.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / window_slice.len() as f64;
     }
     var
-}
-
-/// Z-score normalization
-fn zscore(values: &[f64]) -> Vec<f64> {
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
-    let std = (values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64).sqrt();
-    values.iter().map(|x| if std != 0.0 { (x - mean) / std } else { 0.0 }).collect()
 }
 
 /// Normalize a vector to 0–1
@@ -93,7 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let headers = rdr.headers()?.clone();
     let records: Vec<StringRecord> = rdr.records().collect::<Result<_, _>>()?;
 
-    // Detect all channels automatically
+    // Detect all channels automatically (looking for *_rms and *_energy)
     let mut channels = Vec::new();
     for h in headers.iter() {
         if h.ends_with("_rms") {
@@ -127,24 +115,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         let rms_vals: Vec<f64> = records.iter().map(|r| r[rms_idx].parse::<f64>().unwrap_or(0.0)).collect();
         let energy_vals: Vec<f64> = records.iter().map(|r| r[energy_idx].parse::<f64>().unwrap_or(0.0)).collect();
 
+        let rms_derivative = derivative(&rms_vals).iter().map(|v| v.abs()).collect::<Vec<f64>>();
+        let rms_second_derivative = second_derivative(&rms_vals).iter().map(|v| v.abs()).collect::<Vec<f64>>();
+        let rms_var = rolling_variance(&rms_vals, rows_per_sec);
+
         let mut col_map = HashMap::new();
 
-        // Weighted engagement: RMS 70%, Energy 30%
-        let engagement_raw: Vec<f64> = rms_vals.iter().zip(energy_vals.iter())
-            .map(|(r, e)| 0.7*r + 0.3*e).collect();
+        // Weighted composite engagement
+        let engagement_raw: Vec<f64> = (0..rms_vals.len()).map(|i| {
+            0.6*rms_vals[i] + 0.2*energy_vals[i] + 0.1*rms_derivative[i] + 0.05*rms_second_derivative[i] + 0.05*rms_var[i]
+        }).collect();
 
         let engagement_norm = normalize_01(&engagement_raw);
-        col_map.insert("engagement_score".to_string(), engagement_norm.clone());
-
-        // Rolling EMAs for 1s, 5s, 10s
-        col_map.insert("engagement_ema_1s".to_string(), ema(&engagement_norm, alpha_1s));
-        col_map.insert("engagement_ema_5s".to_string(), ema(&engagement_norm, alpha_5s));
-        col_map.insert("engagement_ema_10s".to_string(), ema(&engagement_norm, alpha_10s));
-
-        // Percentile ranks
-        col_map.insert("engagement_ema_1s_percentile".to_string(), percentile_rank(&col_map["engagement_ema_1s"]));
-        col_map.insert("engagement_ema_5s_percentile".to_string(), percentile_rank(&col_map["engagement_ema_5s"]));
-        col_map.insert("engagement_ema_10s_percentile".to_string(), percentile_rank(&col_map["engagement_ema_10s"]));
+        col_map.insert("rms_energy_engage".to_string(), engagement_norm.clone());
+        col_map.insert("rms_energy_engage_ema_1s".to_string(), ema(&engagement_norm, alpha_1s));
+        col_map.insert("rms_energy_engage_ema_5s".to_string(), ema(&engagement_norm, alpha_5s));
+        col_map.insert("rms_energy_engage_ema_10s".to_string(), ema(&engagement_norm, alpha_10s));
+        col_map.insert("rms_energy_engage_ema_1s_percentile".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_1s"]));
+        col_map.insert("rms_energy_engage_ema_5s_percentile".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_5s"]));
+        col_map.insert("rms_energy_engage_ema_10s_percentile".to_string(), percentile_rank(&col_map["rms_energy_engage_ema_10s"]));
 
         outputs.insert(ch.clone(), col_map);
     }
@@ -155,19 +144,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         "{}_processed.csv",
         input_file.file_stem().unwrap().to_string_lossy()
     ));
-    let mut wtr = WriterBuilder::new().from_path(output_path)?;
+    let mut wtr = WriterBuilder::new().from_path(&output_path)?;
 
     // Headers
     let mut new_headers = headers.clone();
     for ch in channels.iter() {
         for feat in &[
-            "engagement_score",
-            "engagement_ema_1s",
-            "engagement_ema_5s",
-            "engagement_ema_10s",
-            "engagement_ema_1s_percentile",
-            "engagement_ema_5s_percentile",
-            "engagement_ema_10s_percentile"
+            "rms_energy_engage",
+            "rms_energy_engage_ema_1s",
+            "rms_energy_engage_ema_5s",
+            "rms_energy_engage_ema_10s",
+            "rms_energy_engage_ema_1s_percentile",
+            "rms_energy_engage_ema_5s_percentile",
+            "rms_energy_engage_ema_10s_percentile"
         ] {
             new_headers.push_field(&format!("{}_{}", ch, feat));
         }
@@ -180,13 +169,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         for ch in channels.iter() {
             let feats = outputs.get(ch).unwrap();
             for feat_name in &[
-                "engagement_score",
-                "engagement_ema_1s",
-                "engagement_ema_5s",
-                "engagement_ema_10s",
-                "engagement_ema_1s_percentile",
-                "engagement_ema_5s_percentile",
-                "engagement_ema_10s_percentile"
+                "rms_energy_engage",
+                "rms_energy_engage_ema_1s",
+                "rms_energy_engage_ema_5s",
+                "rms_energy_engage_ema_10s",
+                "rms_energy_engage_ema_1s_percentile",
+                "rms_energy_engage_ema_5s_percentile",
+                "rms_energy_engage_ema_10s_percentile"
             ] {
                 row.push(feats.get(*feat_name).unwrap()[i].to_string());
             }
@@ -195,7 +184,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     wtr.flush()?;
-    println!("Processed CSV with engagement scores and percentile ranks saved successfully!");
+    println!("Processed CSV with rms_energy_engage scores saved successfully at: {}", output_path.display());
 
     Ok(())
 }
