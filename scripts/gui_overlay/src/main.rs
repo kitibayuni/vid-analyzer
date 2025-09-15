@@ -67,6 +67,10 @@ fn main() -> Result<()> {
     let full_width = width + right_bar_width;
     let full_height = height + top_bar_height + bottom_bar_height;
 
+    // Scale video for top-left display
+    let scaled_video_width = width / 2;
+    let scaled_video_height = height / 2;
+
     let fourcc = videoio::VideoWriter::fourcc('a','v','c','1')?;
     let mut writer = videoio::VideoWriter::new(
         "output_overlay.mp4",
@@ -77,16 +81,12 @@ fn main() -> Result<()> {
     )?;
 
     // Attention smoothing and trail
-    let mut last_x = width / 2;
-    let mut last_y = height / 2;
-    let movement_amplifier = 3.0;
-    let jitter_max = 0.03;
-    let trail_length = 10;
+    let mut last_x = scaled_video_width / 2; // Initialize to center
+    let mut last_y = scaled_video_height / 2 + top_bar_height; // Initialize to center + offset
+    let movement_amplifier = 8.0; // Increased from 3.0 for more dramatic movement
+    let jitter_max = 0.08; // Increased from 0.03 for more jitter
+    let trail_length = 15; // Increased from 10 for longer trail
     let mut trail: Vec<(i32, i32)> = Vec::new();
-
-    // Scale video for top-left display
-    let scaled_video_width = width / 2;
-    let scaled_video_height = height / 2;
 
     let mut frame_idx = 0;
     loop {
@@ -116,50 +116,76 @@ fn main() -> Result<()> {
             imgproc::INTER_LINEAR
         )?;
 
+        // Copy resized frame to canvas (positioned below top bar)
         let roi = core::Rect::new(0, top_bar_height, scaled_video_width, scaled_video_height);
         let mut roi_mat = core::Mat::roi_mut(&mut canvas, roi)?;
         resized_frame.copy_to(&mut roi_mat)?;
 
-        // --- Draw top bar ---
+        // --- Draw overlay elements ---
         draw_top_bar(&mut canvas, &data, full_width, top_bar_height)?;
-
-        // --- Draw bottom bars ---
         draw_bottom_bar(&mut canvas, &data, full_width, bottom_bar_height, top_bar_height)?;
-
-        // --- Draw right metrics ---
         draw_right_bar(&mut canvas, &data, width, top_bar_height)?;
 
-        // --- Attention point ---
-        let mut x = ((data.attention_center_x * scaled_video_width as f64 * movement_amplifier) as i32)
-            .clamp(0, full_width-1);
-        let mut y = ((data.attention_center_y * scaled_video_height as f64 * movement_amplifier) as i32)
-            .clamp(0, full_height-1);
+        // --- Calculate attention point coordinates (relative to the resized video area) ---
+        // Center the coordinate system and allow full range across the video
+        let center_x = scaled_video_width / 2;
+        let center_y = scaled_video_height / 2;
+        
+        // Map attention coordinates from [0,1] to [-0.5, 0.5] for centering, then scale to video dimensions
+        let attention_x_centered = (data.attention_center_x - 0.5) * movement_amplifier;
+        let attention_y_centered = (data.attention_center_y - 0.5) * movement_amplifier;
+        
+        let mut x = (center_x as f64 + attention_x_centered * scaled_video_width as f64) as i32;
+        let mut y = (center_y as f64 + attention_y_centered * scaled_video_height as f64) as i32;
+        
+        // Clamp to video bounds
+        x = x.clamp(0, scaled_video_width-1);
+        y = y.clamp(0, scaled_video_height-1);
 
-        x = ((0.7 * last_x as f64 + 0.3 * x as f64) as i32).clamp(0, full_width-1);
-        y = ((0.7 * last_y as f64 + 0.3 * y as f64) as i32).clamp(0, full_height-1);
+        // Add offset for positioning within the canvas (video is offset by top_bar_height)
+        y += top_bar_height;
+
+        // Smooth movement (reduced smoothing for more responsive movement)
+        x = ((0.4 * last_x as f64 + 0.6 * x as f64) as i32).clamp(0, scaled_video_width-1);
+        y = ((0.4 * last_y as f64 + 0.6 * y as f64) as i32).clamp(top_bar_height, top_bar_height + scaled_video_height-1);
         last_x = x;
         last_y = y;
 
-        let jitter_x = ((rand::random::<f64>() * 2.0 - 1.0) * full_width as f64 * jitter_max) as i32;
-        let jitter_y = ((rand::random::<f64>() * 2.0 - 1.0) * full_height as f64 * jitter_max) as i32;
-        x = (x + jitter_x).clamp(0, full_width-1);
-        y = (y + jitter_y).clamp(0, full_height-1);
+        // Optional: Remove jitter for purely data-driven movement
+        // let jitter_x = ((rand::random::<f64>() * 2.0 - 1.0) * scaled_video_width as f64 * jitter_max) as i32;
+        // let jitter_y = ((rand::random::<f64>() * 2.0 - 1.0) * scaled_video_height as f64 * jitter_max) as i32;
+        // x = (x + jitter_x).clamp(0, scaled_video_width-1);
+        // y = (y + jitter_y).clamp(top_bar_height, top_bar_height + scaled_video_height-1);
 
-        // --- Draw attention trail ---
+        // --- Draw attention trail on the canvas ---
         trail.push((x, y));
         if trail.len() > trail_length { trail.remove(0); }
         for (i, &(tx, ty)) in trail.iter().enumerate() {
             let alpha = i as f64 / trail.len() as f64;
-            imgproc::circle(&mut canvas, core::Point::new(tx, ty), 10,
-                            core::Scalar::new(255.0 * alpha, 0.0, 0.0, 0.0),
-                            -1, imgproc::LINE_8, 0)?;
+            let radius = (5.0 + alpha * 10.0) as i32; // Variable radius for trail
+            imgproc::circle(
+                &mut canvas,
+                core::Point::new(tx, ty),
+                radius,
+                core::Scalar::new(255.0 * alpha, 100.0 * alpha, 0.0, 0.0), // Orange to red gradient
+                1, // Changed from 2 to 1-2 pixel width
+                imgproc::LINE_8,
+                0
+            )?;
         }
 
-        // --- Draw current attention dot ---
-        imgproc::circle(&mut canvas, core::Point::new(x, y), 15,
-                        core::Scalar::new(0.0,0.0,255.0,0.0),
-                        -1, imgproc::LINE_8, 0)?;
+        // --- Draw current attention dot (hollow outer ring only) ---
+        imgproc::circle(
+            &mut canvas,
+            core::Point::new(x, y),
+            25, // Outer ring radius
+            core::Scalar::new(255.0, 255.0, 0.0, 0.0), // Yellow color
+            2, // 1-2 pixel width hollow ring
+            imgproc::LINE_8,
+            0
+        )?;
 
+        // CRITICAL: Write the frame to the video file
         writer.write(&canvas)?;
         frame_idx += 1;
     }
@@ -306,8 +332,6 @@ fn draw_bottom_bar(frame: &mut Mat, data: &FrameData, width: i32, bottom_height:
     Ok(())
 }
 
-
-
 // --- Right Metrics Panel ---
 fn draw_right_bar(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height: i32) -> Result<()> {
     let x_start = width;
@@ -324,9 +348,14 @@ fn draw_right_bar(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height:
         format!("Saliency Entropy: {:.2}", data.saliency_entropy),
         format!("Saliency Change Rate: {:.2}", data.saliency_change_rate),
         format!("Attention X/Y: {:.2}/{:.2}", data.attention_center_x, data.attention_center_y),
-        format!("Visual Engagement EMA1s: {:.2}", data.visual_engagement_ema_1s),
-        format!("Visual Engagement EMA3s: {:.2}", data.visual_engagement_ema_3s),
-        format!("Visual Engagement EMA10s: {:.2}", data.visual_engagement_ema_10s),
+        format!("Attention Concentration: {:.2}", data.attention_concentration),
+        format!("Attention Shift Rate: {:.2}", data.attention_shift_rate),
+        format!("Visual Engagement Score: {:.2}", data.visual_engagement_score),
+        format!("VE EMA1s: {:.2}", data.visual_engagement_ema_1s),
+        format!("VE EMA3s: {:.2}", data.visual_engagement_ema_3s),
+        format!("VE EMA10s: {:.2}", data.visual_engagement_ema_10s),
+        format!("VE Variance 1s: {:.2}", data.visual_engagement_variance_1s),
+        format!("VE Variance 5s: {:.2}", data.visual_engagement_variance_5s),
     ];
 
     for text in &metrics {
