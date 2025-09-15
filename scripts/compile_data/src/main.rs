@@ -1,7 +1,7 @@
 use csv::{ReaderBuilder, WriterBuilder};
 use ordered_float::OrderedFloat;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeSet};
 use std::env;
 use std::error::Error;
 
@@ -53,6 +53,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(|f| read_csv(f, time_col))
         .collect::<Result<_, _>>()?;
 
+    // Collect all unique times across all CSVs
+    let mut all_times = BTreeSet::new();
+    for d in &datasets {
+        for r in &d.rows {
+            if let Some(&t) = r.get(time_col) {
+                all_times.insert(OrderedFloat(t));
+            }
+        }
+    }
+
     // Prepare global header
     let mut all_headers = vec![time_col.to_string()];
     for (i, d) in datasets.iter().enumerate() {
@@ -62,18 +72,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-
-    // Collect all exact time values
-    let mut all_times: Vec<f64> = Vec::new();
-    for d in &datasets {
-        for r in &d.rows {
-            if let Some(&t) = r.get(time_col) {
-                all_times.push(t);
-            }
-        }
-    }
-    all_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    all_times.dedup();
 
     // Pre-index CSVs by time for fast lookup
     let indexed: Vec<HashMap<OrderedFloat<f64>, &HashMap<String,f64>>> = datasets
@@ -89,15 +87,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Parallel assembly of rows
     let rows: Vec<Vec<String>> = all_times
         .par_iter()
-        .map(|&time_val| {
+        .map(|&OrderedFloat(time_val)| {
             let mut row: Vec<String> = Vec::new();
             row.push(format!("{:.6}", time_val));
 
-            let key = OrderedFloat(time_val);
             for (i, d) in datasets.iter().enumerate() {
                 for h in &d.headers {
                     if h == time_col { continue; }
-                    let val_str = if let Some(r) = indexed[i].get(&key) {
+                    let val_str = if let Some(r) = indexed[i].get(&OrderedFloat(time_val)) {
                         if let Some(val) = r.get(h) {
                             format!("{:.6}", val)
                         } else {
