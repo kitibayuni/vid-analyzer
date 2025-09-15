@@ -150,7 +150,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     ));
     let mut wtr = WriterBuilder::new().from_path(&output_path)?;
 
-    let mut new_headers = headers.clone();
+    // Create new headers
+    let mut new_headers = csv::StringRecord::new();
+    for h in headers.iter() {
+        let renamed = match &h[..] {
+            "valence" | "arousal" | "dominance" => format!("emo_{}", h),
+            _ => h.to_string(),
+        };
+        new_headers.push_field(&renamed);
+    }
+
+    // Append engagement feature columns
     let engagement_features = [
         "emotion_engage_score",
         "emotion_engage_ema_1s",
@@ -162,7 +172,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     for feat in &engagement_features {
         new_headers.push_field(feat);
     }
+
     wtr.write_record(&new_headers)?;
+
 
     for i in 0..records.len() {
         let mut row: Vec<String> = records[i].iter().map(|s| s.to_string()).collect();
