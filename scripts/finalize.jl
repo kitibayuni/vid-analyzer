@@ -410,28 +410,31 @@ function main()
     end
     
     # -----------------------------
-    # Export results
+    # Export results for Rust
     # -----------------------------
-    output_file = "combined_engagement.csv"
-    CSV.write(output_file, result)
-    
-    println("✅ Analysis complete!")
-    println("   - Output file: $output_file")
-    println("   - Total rows: $(nrow(result))")
-    println("   - Total columns: $(ncol(result))")
-    
-    # Show summary of key columns
-    println("\n📊 Key engagement components:")
-    key_cols = filter(name -> occursin("_pct", name) || name == "total_engagement", names(result))
-    for col in key_cols[1:min(10, length(key_cols))]
-        non_missing = sum(.!ismissing.(result[!, col]))
-        println("   - $col: $non_missing non-missing values")
+    function export_for_rust(result::DataFrame, filename::String="combined_engagement.csv")
+        println("💾 Preparing CSV for Rust compatibility...")
+
+        # Replace missing values with 0.0
+        for col in names(result)
+            if eltype(result[!, col]) <: Union{Missing, Real}
+                result[!, col] = coalesce.(result[!, col], 0.0)
+            end
+        end
+
+        # Force all numeric columns to Float64
+        for col in names(result)
+            if eltype(result[!, col]) <: Real
+                result[!, col] = Float64.(result[!, col])
+            end
+        end
+
+        # Write CSV with proper header, no comments
+        CSV.write(filename, result; writeheader=true)
+        println("✅ CSV written: $filename")
+        println("   Rows: $(nrow(result)), Columns: $(ncol(result))")
     end
-    
-    if length(key_cols) > 10
-        println("   ... and $(length(key_cols) - 10) more columns")
-    end
-    
+
     return result
 end
 

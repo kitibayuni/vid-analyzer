@@ -4,33 +4,55 @@ use opencv::{
     core,
     imgproc,
 };
-use csv::Reader;
+use csv::ReaderBuilder;
 use serde::Deserialize;
 use anyhow::Result;
 
 #[derive(Debug, Deserialize, Clone)]
 struct FrameData {
     time_sec: f64,
-    motion_intensity: f64,
-    motion_variance: f64,
-    motion_change_rate: f64,
-    mean_saliency: f64,
-    max_saliency: f64,
-    saliency_entropy: f64,
-    saliency_change_rate: f64,
+    cat_engage_ema_1s_pct: f64,
+    cat_engage_ema_5s_pct: f64,
+    cat_engage_ema_10s_pct: f64,
+    transc_engage_ema_1s_pct: f64,
+    transc_engage_ema_5s_pct: f64,
+    transc_engage_ema_10s_pct: f64,
+    vocals_rms_energy_ema_1s: f64,
+    vocals_rms_energy_ema_5s: f64,
+    vocals_rms_energy_ema_10s: f64,
+    vocals_rms_energy_ema_1s_pct: f64,
+    vocals_rms_energy_ema_5s_pct: f64,
+    vocals_rms_energy_ema_10s_pct: f64,
+    vocals_spectral_ema_1s: f64,
+    vocals_spectral_ema_5s: f64,
+    vocals_spectral_ema_10s: f64,
+    vocals_spectral_ema_1s_pct: f64,
+    vocals_spectral_ema_5s_pct: f64,
+    vocals_spectral_ema_10s_pct: f64,
+    nonvocals_rms_energy_ema_1s: f64,
+    nonvocals_rms_energy_ema_5s: f64,
+    nonvocals_rms_energy_ema_10s: f64,
+    nonvocals_rms_energy_ema_1s_pct: f64,
+    nonvocals_rms_energy_ema_5s_pct: f64,
+    nonvocals_rms_energy_ema_10s_pct: f64,
+    nonvocals_spectral_ema_1s: f64,
+    nonvocals_spectral_ema_5s: f64,
+    nonvocals_spectral_ema_10s: f64,
+    nonvocals_spectral_ema_1s_pct: f64,
+    nonvocals_spectral_ema_5s_pct: f64,
+    nonvocals_spectral_ema_10s_pct: f64,
     attention_center_x: f64,
     attention_center_y: f64,
     attention_concentration: f64,
     attention_shift_rate: f64,
-    visual_engagement_score: f64,
-    visual_engagement_ema_1s: f64,
-    visual_engagement_ema_3s: f64,
-    visual_engagement_ema_10s: f64,
-    visual_engagement_ema_1s_percentile: f64,
-    visual_engagement_ema_3s_percentile: f64,
-    visual_engagement_ema_10s_percentile: f64,
-    visual_engagement_variance_1s: f64,
-    visual_engagement_variance_5s: f64,
+    visual_engage_ema_1s_pct: f64,
+    visual_engage_ema_3s_pct: f64,
+    visual_engage_ema_10s_pct: f64,
+    visual_engage_ema_1s: f64,
+    visual_engage_ema_3s: f64,
+    visual_engage_ema_10s: f64,
+    total_engagement: f64,
+    total_engagement_pct: f64,
 }
 
 fn main() -> Result<()> {
@@ -42,12 +64,24 @@ fn main() -> Result<()> {
     let video_path = &args[1];
     let csv_path = &args[2];
 
-    // Load CSV
-    let mut rdr = Reader::from_path(csv_path)?;
+    // Load CSV robustly
     let mut frame_data: Vec<FrameData> = Vec::new();
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(true)      // assumes first line is header
+        .flexible(true)         // allows rows with different number of fields
+        .from_path(csv_path)?;  
+
     for result in rdr.deserialize() {
-        let record: FrameData = result?;
-        frame_data.push(record);
+        match result {
+            Ok(record) => frame_data.push(record),
+            Err(e) => eprintln!("Warning: skipping malformed row: {}", e),
+        }
+    }
+
+    // Check if any data loaded
+    if frame_data.is_empty() {
+        eprintln!("Error: No valid rows found in CSV. Check CSV format.");
+        std::process::exit(1);
     }
 
     // Open video
@@ -61,7 +95,7 @@ fn main() -> Result<()> {
     let height = cap.get(videoio::CAP_PROP_FRAME_HEIGHT)? as i32;
 
     let top_bar_height = 60;
-    let bottom_bar_height = 120;
+    let bottom_bar_height = 300; // Increased for more engagement bars
     let right_bar_width = 300;
 
     let full_width = width + right_bar_width;
@@ -81,16 +115,14 @@ fn main() -> Result<()> {
     )?;
 
     // Attention smoothing and trail
-    let mut last_x = scaled_video_width / 2; // Initialize to center
-    let mut last_y = scaled_video_height / 2 + top_bar_height; // Initialize to center + offset
-    let movement_amplifier = 20.0; // Increased from 3.0 for more dramatic movement
-    let jitter_max = 0.08; // Increased from 0.03 for more jitter
-    let trail_length = 15; // Increased from 10 for longer trail
+    let mut last_x = scaled_video_width / 2;
+    let mut last_y = scaled_video_height / 2 + top_bar_height;
+    let movement_amplifier = 20.0;
+    let trail_length = 15;
     let mut trail: Vec<(i32, i32)> = Vec::new();
 
     // Dynamic center calculation for 5-second windows
-    let window_duration = 5.0; // 5 seconds
-    let mut current_window_start = 0.0;
+    let window_duration = 5.0;
 
     let mut frame_idx = 0;
     loop {
@@ -121,7 +153,7 @@ fn main() -> Result<()> {
             let sum_y: f64 = window_data.iter().map(|d| d.attention_center_y).sum();
             (sum_x / window_data.len() as f64, sum_y / window_data.len() as f64)
         } else {
-            (0.5, 0.5) // Default to center if no data
+            (0.5, 0.5)
         };
 
         // Create canvas
@@ -145,70 +177,57 @@ fn main() -> Result<()> {
 
         // --- Draw overlay elements ---
         draw_top_bar(&mut canvas, &data, full_width, top_bar_height)?;
-        draw_bottom_bar(&mut canvas, &data, full_width, bottom_bar_height, top_bar_height)?;
-        draw_right_bar(&mut canvas, &data, width, top_bar_height)?;
+        draw_bottom_engagement_bars(&mut canvas, &data, full_width, bottom_bar_height, full_height)?;
+        draw_right_vertical_bars(&mut canvas, &data, width, top_bar_height, scaled_video_height)?;
 
         // --- Calculate attention point coordinates with dynamic centering ---
-        // Use the 5-second window average as the "center" instead of 0.5, 0.5
         let center_x = scaled_video_width / 2;
         let center_y = scaled_video_height / 2;
         
-        // Calculate offset from the window's average attention point
         let attention_x_offset = (data.attention_center_x - avg_attention_x) * movement_amplifier;
         let attention_y_offset = (data.attention_center_y - avg_attention_y) * movement_amplifier;
         
-        // Apply offset to the video center
         let mut x = (center_x as f64 + attention_x_offset * scaled_video_width as f64) as i32;
         let mut y = (center_y as f64 + attention_y_offset * scaled_video_height as f64) as i32;
         
-        // Clamp to video bounds
         x = x.clamp(0, scaled_video_width-1);
         y = y.clamp(0, scaled_video_height-1);
-
-        // Add offset for positioning within the canvas (video is offset by top_bar_height)
         y += top_bar_height;
 
-        // Smooth movement (reduced smoothing for more responsive movement)
+        // Smooth movement
         x = ((0.4 * last_x as f64 + 0.6 * x as f64) as i32).clamp(0, scaled_video_width-1);
         y = ((0.4 * last_y as f64 + 0.6 * y as f64) as i32).clamp(top_bar_height, top_bar_height + scaled_video_height-1);
         last_x = x;
         last_y = y;
 
-        // Optional: Remove jitter for purely data-driven movement
-        // let jitter_x = ((rand::random::<f64>() * 2.0 - 1.0) * scaled_video_width as f64 * jitter_max) as i32;
-        // let jitter_y = ((rand::random::<f64>() * 2.0 - 1.0) * scaled_video_height as f64 * jitter_max) as i32;
-        // x = (x + jitter_x).clamp(0, scaled_video_width-1);
-        // y = (y + jitter_y).clamp(top_bar_height, top_bar_height + scaled_video_height-1);
-
-        // --- Draw attention trail on the canvas ---
+        // --- Draw attention trail ---
         trail.push((x, y));
         if trail.len() > trail_length { trail.remove(0); }
         for (i, &(tx, ty)) in trail.iter().enumerate() {
             let alpha = i as f64 / trail.len() as f64;
-            let radius = (5.0 + alpha * 10.0) as i32; // Variable radius for trail
+            let radius = (5.0 + alpha * 10.0) as i32;
             imgproc::circle(
                 &mut canvas,
                 core::Point::new(tx, ty),
                 radius,
-                core::Scalar::new(255.0 * alpha, 100.0 * alpha, 0.0, 0.0), // Orange to red gradient
-                1, // Thin 1 pixel width for trail
+                core::Scalar::new(255.0 * alpha, 100.0 * alpha, 0.0, 0.0),
+                1,
                 imgproc::LINE_8,
                 0
             )?;
         }
 
-        // --- Draw ONLY the yellow hollow outer ring ---
+        // --- Draw yellow hollow outer ring ---
         imgproc::circle(
             &mut canvas,
             core::Point::new(x, y),
-            25, // Radius
-            core::Scalar::new(0.0, 255.0, 255.0, 0.0), // Yellow color (BGR format: Blue=0, Green=255, Red=255)
-            2, // 2 pixel width hollow ring
+            25,
+            core::Scalar::new(0.0, 255.0, 255.0, 0.0),
+            2,
             imgproc::LINE_8,
             0
         )?;
 
-        // CRITICAL: Write the frame to the video file
         writer.write(&canvas)?;
         frame_idx += 1;
     }
@@ -219,14 +238,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// --- Top Bar ---
+// --- Top Bar (keeping original audio-related bars) ---
 fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> Result<()> {
     let bar_width = (width / 6) as i32;
     let spacing = 20;
     let bars = [
-        (data.motion_intensity, core::Scalar::new(0.0, 255.0, 0.0, 0.0)),
-        (data.motion_variance, core::Scalar::new(0.0, 0.0, 255.0, 0.0)),
-        (data.motion_change_rate, core::Scalar::new(255.0, 0.0, 0.0, 0.0))
+        (data.vocals_rms_energy_ema_1s_pct, core::Scalar::new(0.0, 255.0, 0.0, 0.0)),
+        (data.vocals_spectral_ema_1s_pct, core::Scalar::new(0.0, 0.0, 255.0, 0.0)),
+        (data.nonvocals_rms_energy_ema_1s_pct, core::Scalar::new(255.0, 0.0, 0.0, 0.0))
     ];
     for (i, &(value, color)) in bars.iter().enumerate() {
         let h = (value * height as f64) as i32;
@@ -241,110 +260,97 @@ fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> R
     Ok(())
 }
 
-fn draw_bottom_bar(frame: &mut Mat, data: &FrameData, width: i32, bottom_height: i32, _top_bar_height: i32) -> Result<()> {
-    let y_start = frame.rows() - bottom_height;
+// --- Bottom Engagement Bars ---
+fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bottom_height: i32, full_height: i32) -> Result<()> {
+    let y_start = full_height - bottom_height;
     let bar_height = 20;
-    let spacing = 10;
+    let spacing = 8;
+    let max_bar_width = width / 2 - 80; // Space for labels and values
 
-    // Max width per half of the video
-    let max_bar_width = width / 2 - 50; // 50px padding for label/numbers
-
-    // Left half values
-    let left_values = [
-        data.visual_engagement_ema_1s_percentile,
-        data.visual_engagement_ema_3s_percentile,
+    // Engagement categories with their 1s and 10s percentile values
+    let engagement_data = [
+        ("Cat", data.cat_engage_ema_1s_pct, data.cat_engage_ema_10s_pct, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
+        ("Transc", data.transc_engage_ema_1s_pct, data.transc_engage_ema_10s_pct, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
+        ("Visual", data.visual_engage_ema_1s_pct, data.visual_engage_ema_10s_pct, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
+        ("Vocals RMS", data.vocals_rms_energy_ema_1s_pct, data.vocals_rms_energy_ema_10s_pct, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
+        ("Vocals Spec", data.vocals_spectral_ema_1s_pct, data.vocals_spectral_ema_10s_pct, core::Scalar::new(128.0, 0.0, 255.0, 0.0)), // Purple
+        ("NonVoc RMS", data.nonvocals_rms_energy_ema_1s_pct, data.nonvocals_rms_energy_ema_10s_pct, core::Scalar::new(255.0, 128.0, 0.0, 0.0)), // Orange
+        ("NonVoc Spec", data.nonvocals_spectral_ema_1s_pct, data.nonvocals_spectral_ema_10s_pct, core::Scalar::new(0.0, 128.0, 255.0, 0.0)), // Light Blue
+        ("Total", data.total_engagement_pct, data.total_engagement_pct, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
     ];
-    let left_colors = [
-        core::Scalar::new(0.0, 255.0, 0.0, 0.0),   // EMA1s - Green
-        core::Scalar::new(0.0, 255.0, 255.0, 0.0), // EMA3s - Yellow
-    ];
-    let left_labels = ["EMA1s", "EMA3s"];
 
-    for (i, &val) in left_values.iter().enumerate() {
-        let bar_width = (val * max_bar_width as f64) as i32;
-        let y = y_start + i as i32 * (bar_height + spacing);
+    for (i, &(label, val_1s, val_10s, color)) in engagement_data.iter().enumerate() {
+        let y = y_start + 10 + i as i32 * (bar_height + spacing);
 
-        // Draw horizontal bar
+        // Left side - 1s EMA percentile
+        let bar_width_1s = (val_1s * max_bar_width as f64) as i32;
         imgproc::rectangle(
             frame,
-            core::Rect::new(50, y, bar_width, bar_height),
-            left_colors[i],
+            core::Rect::new(70, y, bar_width_1s, bar_height),
+            color,
             -1,
             imgproc::LINE_8,
             0
         )?;
 
-        // Draw label
+        // Label for category
         imgproc::put_text(
             frame,
-            left_labels[i],
+            &format!("{}1s", label),
             core::Point::new(5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.4,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
             false
         )?;
 
-        // Draw numeric value
+        // Value for 1s
         imgproc::put_text(
             frame,
-            &format!("{:.2}", val),
-            core::Point::new(50 + bar_width + 5, y + bar_height - 4),
+            &format!("{:.2}", val_1s),
+            core::Point::new(70 + bar_width_1s + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.4,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
             false
         )?;
-    }
 
-    // Right half values
-    let right_values = [
-        data.visual_engagement_ema_10s_percentile,
-    ];
-    let right_colors = [
-        core::Scalar::new(255.0, 0.0, 0.0, 0.0), // EMA10s - Red
-    ];
-    let right_labels = ["EMA10s"];
-
-    for (i, &val) in right_values.iter().enumerate() {
-        let bar_width = (val * max_bar_width as f64) as i32;
-        let y = y_start + (i + left_values.len()) as i32 * (bar_height + spacing);
-
-        // Draw horizontal bar on right half
-        let x_start = width / 2 + 50;
+        // Right side - 10s EMA percentile
+        let x_start_10s = width / 2 + 70;
+        let bar_width_10s = (val_10s * max_bar_width as f64) as i32;
         imgproc::rectangle(
             frame,
-            core::Rect::new(x_start, y, bar_width, bar_height),
-            right_colors[i],
+            core::Rect::new(x_start_10s, y, bar_width_10s, bar_height),
+            color,
             -1,
             imgproc::LINE_8,
             0
         )?;
 
-        // Draw label
+        // Label for 10s
         imgproc::put_text(
             frame,
-            right_labels[i],
-            core::Point::new(x_start - 45, y + bar_height - 4),
+            &format!("{}10s", label),
+            core::Point::new(width / 2 + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.4,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
             false
         )?;
 
-        // Draw numeric value
+        // Value for 10s
         imgproc::put_text(
             frame,
-            &format!("{:.2}", val),
-            core::Point::new(x_start + bar_width + 5, y + bar_height - 4),
+            &format!("{:.2}", val_10s),
+            core::Point::new(x_start_10s + bar_width_10s + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.4,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
@@ -355,45 +361,64 @@ fn draw_bottom_bar(frame: &mut Mat, data: &FrameData, width: i32, bottom_height:
     Ok(())
 }
 
-// --- Right Metrics Panel ---
-fn draw_right_bar(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height: i32) -> Result<()> {
-    let x_start = width;
-    let mut y = top_bar_height;
-    let line_height = 20;
+// --- Right Vertical Bars ---
+fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height: i32, video_height: i32) -> Result<()> {
+    let x_start = width + 10;
+    let bar_width = 30;
+    let spacing = 35;
+    let max_bar_height = video_height - 40; // Leave some padding
 
-    let metrics = [
-        format!("Time: {:.2}", data.time_sec),
-        format!("Motion Intensity: {:.2}", data.motion_intensity),
-        format!("Motion Variance: {:.2}", data.motion_variance),
-        format!("Motion Change Rate: {:.2}", data.motion_change_rate),
-        format!("Mean Saliency: {:.2}", data.mean_saliency),
-        format!("Max Saliency: {:.2}", data.max_saliency),
-        format!("Saliency Entropy: {:.2}", data.saliency_entropy),
-        format!("Saliency Change Rate: {:.2}", data.saliency_change_rate),
-        format!("Attention X/Y: {:.2}/{:.2}", data.attention_center_x, data.attention_center_y),
-        format!("Attention Concentration: {:.2}", data.attention_concentration),
-        format!("Attention Shift Rate: {:.2}", data.attention_shift_rate),
-        format!("Visual Engagement Score: {:.2}", data.visual_engagement_score),
-        format!("VE EMA1s: {:.2}", data.visual_engagement_ema_1s),
-        format!("VE EMA3s: {:.2}", data.visual_engagement_ema_3s),
-        format!("VE EMA10s: {:.2}", data.visual_engagement_ema_10s),
-        format!("VE Variance 1s: {:.2}", data.visual_engagement_variance_1s),
-        format!("VE Variance 5s: {:.2}", data.visual_engagement_variance_5s),
+    // Vertical bars for key metrics
+    let vertical_bars = [
+        ("Attn", data.attention_concentration, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
+        ("Shift", data.attention_shift_rate, core::Scalar::new(255.0, 0.0, 0.0, 0.0)), // Red
+        ("TotEng", data.total_engagement_pct, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
+        ("V1s", data.visual_engage_ema_1s_pct, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
+        ("V3s", data.visual_engage_ema_3s_pct, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
+        ("V10s", data.visual_engage_ema_10s_pct, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
     ];
 
-    for text in &metrics {
+    for (i, &(label, value, color)) in vertical_bars.iter().enumerate() {
+        let x = x_start + i as i32 * spacing;
+        let bar_height = (value * max_bar_height as f64) as i32;
+        let y_bottom = top_bar_height + video_height - 20;
+        let y_top = y_bottom - bar_height;
+
+        // Draw vertical bar
+        imgproc::rectangle(
+            frame,
+            core::Rect::new(x, y_top, bar_width, bar_height),
+            color,
+            -1,
+            imgproc::LINE_8,
+            0
+        )?;
+
+        // Label at bottom
         imgproc::put_text(
             frame,
-            text,
-            core::Point::new(x_start + 5, y),
+            label,
+            core::Point::new(x - 5, y_bottom + 15),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.4,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
             false
         )?;
-        y += line_height;
+
+        // Value at top
+        imgproc::put_text(
+            frame,
+            &format!("{:.2}", value),
+            core::Point::new(x - 10, y_top - 5),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            0.3,
+            core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+            1,
+            imgproc::LINE_8,
+            false
+        )?;
     }
 
     Ok(())
