@@ -154,20 +154,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut new_headers = csv::StringRecord::new();
     for h in headers.iter() {
         let renamed = match &h[..] {
-            "valence" | "arousal" | "dominance" => format!("emo_{}", h),
+            "start_sec" => "time_sec".to_string(),
+            "valence" => "cat_valence".to_string(),
+            "arousal" => "cat_arousal".to_string(),
+            "dominance" => "cat_dominance".to_string(),
+            "cat_neu" => "cat_neu".to_string(),
+            "cat_hap" => "cat_hap".to_string(),
+            "cat_ang" => "cat_ang".to_string(),
+            "cat_sad" => "cat_sad".to_string(),
             _ => h.to_string(),
         };
         new_headers.push_field(&renamed);
     }
 
-    // Append engagement feature columns
+    // Append engagement feature columns (renamed)
     let engagement_features = [
-        "emotion_engage_score",
-        "emotion_engage_ema_1s",
-        "emotion_engage_ema_5s",
-        "emotion_engage_ema_10s",
-        "emotion_engage_percentile",
-        "emotion_engage_variance_5s",
+        "cat_engage_score",
+        "cat_engage_ema_1s",
+        "cat_engage_ema_5s",
+        "cat_engage_ema_10s",
+        "cat_engage_percentile",
+        "cat_engage_variance_5s",
     ];
     for feat in &engagement_features {
         new_headers.push_field(feat);
