@@ -3,6 +3,17 @@ use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::error::Error;
 
+// Add ordered float for precise floating point comparisons
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+struct OrderedFloat<T>(T);
+
+impl<T: PartialOrd> Eq for OrderedFloat<T> {}
+impl<T: PartialOrd> Ord for OrderedFloat<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
 #[derive(Debug)]
 struct CsvRow {
     data: HashMap<String, Option<f64>>,
@@ -205,54 +216,64 @@ fn combine_features_filtered(
     video_rows: &[CsvRow],
     video_features: &HashMap<String, Vec<f64>>,
 ) -> Vec<HashMap<String, f64>> {
+    // Create time-indexed maps for each dataset
+    let vocals_by_time = create_time_index(vocals_rows);
+    let nonvocals_by_time = create_time_index(nonvocals_rows);
+    let video_by_time = create_time_index(video_rows);
+
+    // Get all unique timestamps
+    let mut all_times: BTreeSet<OrderedFloat<f64>> = BTreeSet::new();
+    all_times.extend(vocals_by_time.keys().copied());
+    all_times.extend(nonvocals_by_time.keys().copied());
+    all_times.extend(video_by_time.keys().copied());
+
     let mut combined = Vec::new();
-    let n = vocals_rows.len().max(nonvocals_rows.len()).max(video_rows.len());
 
-    for i in 0..n {
+    for time_sec in all_times {
         let mut row = HashMap::new();
+        
+        // Add time_sec to the row
+        row.insert("time_sec".to_string(), time_sec.0);
 
-        // Only include engage EMA pct columns and attention columns
-        if i < vocals_rows.len() {
-            for (k, v) in &vocals_rows[i].data {
+        // Process vocals data for this timestamp
+        if let Some(vocal_row) = vocals_by_time.get(&time_sec) {
+            for (k, v) in &vocal_row.data {
                 if let Some(val) = *v {
-                    if k.contains("engage_ema") && k.contains("pct") || k.contains("attention") {
-                        row.insert(k.clone(), val);
-                    }
-                }
-            }
-        }
-        if i < nonvocals_rows.len() {
-            for (k, v) in &nonvocals_rows[i].data {
-                if let Some(val) = *v {
-                    if k.contains("engage_ema") && k.contains("pct") || k.contains("attention") {
-                        row.insert(k.clone(), val);
-                    }
-                }
-            }
-        }
-        if i < video_rows.len() {
-            for (k, v) in &video_rows[i].data {
-                if let Some(val) = *v {
-                    if k.contains("engage_ema") && k.contains("pct") || k.contains("attention") {
+                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") {
                         row.insert(k.clone(), val);
                     }
                 }
             }
         }
 
-        // Weighted sums safely
+        // Process nonvocals data for this timestamp
+        if let Some(nonvocal_row) = nonvocals_by_time.get(&time_sec) {
+            for (k, v) in &nonvocal_row.data {
+                if let Some(val) = *v {
+                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") {
+                        row.insert(k.clone(), val);
+                    }
+                }
+            }
+        }
+
+        // Process video data for this timestamp
+        if let Some(video_row) = video_by_time.get(&time_sec) {
+            for (k, v) in &video_row.data {
+                if let Some(val) = *v {
+                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") {
+                        row.insert(k.clone(), val);
+                    }
+                }
+            }
+        }
+
+        // Calculate weighted engagement scores
         let vocal_sum: f64 = WEIGHTS
             .iter()
             .filter(|(k, _)| ["cat", "transc", "vocal_rms", "vocal_spectral"].contains(k))
             .map(|(k, w)| {
-                vocal_features
-                    .keys()
-                    .find(|x| x.contains(k))
-                    .and_then(|key| vocal_features.get(key))
-                    .and_then(|vec| vec.get(i.min(vec.len().saturating_sub(1))))
-                    .copied()
-                    .unwrap_or(0.0)
-                    * w
+                get_feature_value_at_time(time_sec.0, k, vocal_features, &vocals_by_time) * w
             })
             .sum();
 
@@ -260,14 +281,7 @@ fn combine_features_filtered(
             .iter()
             .filter(|(k, _)| ["nonvocal_rms", "nonvocal_spectral"].contains(k))
             .map(|(k, w)| {
-                nonvocal_features
-                    .keys()
-                    .find(|x| x.contains(k))
-                    .and_then(|key| nonvocal_features.get(key))
-                    .and_then(|vec| vec.get(i.min(vec.len().saturating_sub(1))))
-                    .copied()
-                    .unwrap_or(0.0)
-                    * w
+                get_feature_value_at_time(time_sec.0, k, nonvocal_features, &nonvocals_by_time) * w
             })
             .sum();
 
@@ -275,33 +289,17 @@ fn combine_features_filtered(
             .iter()
             .filter(|(k, _)| *k == "video")
             .map(|(_, w)| {
-                video_features
-                    .values()
-                    .map(|vec| vec.get(i.min(vec.len().saturating_sub(1))).copied().unwrap_or(0.0) * w)
-                    .sum::<f64>()
+                get_video_feature_value_at_time(time_sec.0, video_features, &video_by_time) * w
             })
             .sum();
 
         let total = vocal_sum + nonvocal_sum + video_sum;
         row.insert("totalengagement".to_string(), total);
 
-        // EMA percentiles
-        let ema_1s = average_existing(
-            i,
-            &[
-                vocal_features.get("cat_engage_ema_1s_pct"),
-                nonvocal_features.get("rms_energy_engage_ema_1s_pct"),
-                video_features.get("visual_engage_ema_1s_pct"),
-            ],
-        );
-        let ema_10s = average_existing(
-            i,
-            &[
-                vocal_features.get("cat_engage_ema_10s_pct"),
-                nonvocal_features.get("rms_energy_engage_ema_10s_pct"),
-                video_features.get("visual_engage_ema_10s_pct"),
-            ],
-        );
+        // Calculate EMA percentiles based on available data at this timestamp
+        let ema_1s = calculate_ema_at_time(time_sec.0, "_ema_1s_pct", &vocals_by_time, &nonvocals_by_time, &video_by_time);
+        let ema_10s = calculate_ema_at_time(time_sec.0, "_ema_10s_pct", &vocals_by_time, &nonvocals_by_time, &video_by_time);
+        
         row.insert("totalengagement_ema_1s_pct".to_string(), ema_1s);
         row.insert("totalengagement_ema_10s_pct".to_string(), ema_10s);
 
@@ -311,15 +309,102 @@ fn combine_features_filtered(
     combined
 }
 
-// Average non-empty optional vectors
-fn average_existing(i: usize, vecs: &[Option<&Vec<f64>>]) -> f64 {
-    let mut sum = 0.0;
-    let mut count = 0;
-    for v in vecs.iter().flatten() {
-        if let Some(val) = v.get(i.min(v.len().saturating_sub(1))) {
-            sum += *val;
-            count += 1;
+// Create a time-indexed map from CSV rows
+fn create_time_index(rows: &[CsvRow]) -> std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow> {
+    let mut time_index = std::collections::BTreeMap::new();
+    
+    for row in rows {
+        if let Some(Some(time_val)) = row.data.get("time_sec") {
+            let time_key = OrderedFloat(*time_val);
+            time_index.insert(time_key, row);
         }
     }
+    
+    time_index
+}
+
+// Get feature value at specific time
+fn get_feature_value_at_time(
+    time_sec: f64,
+    feature_key: &str,
+    features: &HashMap<String, Vec<f64>>,
+    time_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>
+) -> f64 {
+    // Find the matching feature key
+    if let Some(feature_name) = features.keys().find(|x| x.contains(feature_key)) {
+        if let Some(feature_vec) = features.get(feature_name) {
+            // Find the index of this timestamp in the original data
+            if let Some(row_index) = time_index.keys().position(|t| t.0 == time_sec) {
+                return feature_vec.get(row_index).copied().unwrap_or(0.0);
+            }
+        }
+    }
+    0.0
+}
+
+// Get video feature value at specific time
+fn get_video_feature_value_at_time(
+    time_sec: f64,
+    features: &HashMap<String, Vec<f64>>,
+    time_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>
+) -> f64 {
+    if let Some(row_index) = time_index.keys().position(|t| t.0 == time_sec) {
+        let sum: f64 = features.values()
+            .map(|vec| vec.get(row_index).copied().unwrap_or(0.0))
+            .sum();
+        sum
+    } else {
+        0.0
+    }
+}
+
+// Calculate EMA at specific time
+fn calculate_ema_at_time(
+    time_sec: f64,
+    ema_suffix: &str,
+    vocals_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>,
+    nonvocals_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>,
+    video_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>
+) -> f64 {
+    let mut sum = 0.0;
+    let mut count = 0;
+    let time_key = OrderedFloat(time_sec);
+
+    // Check vocals
+    if let Some(row) = vocals_index.get(&time_key) {
+        for (k, v) in &row.data {
+            if k.contains("engage") && k.ends_with(ema_suffix) {
+                if let Some(val) = *v {
+                    sum += val;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    // Check nonvocals
+    if let Some(row) = nonvocals_index.get(&time_key) {
+        for (k, v) in &row.data {
+            if k.contains("engage") && k.ends_with(ema_suffix) {
+                if let Some(val) = *v {
+                    sum += val;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    // Check video
+    if let Some(row) = video_index.get(&time_key) {
+        for (k, v) in &row.data {
+            if k.contains("engage") && k.ends_with(ema_suffix) {
+                if let Some(val) = *v {
+                    sum += val;
+                    count += 1;
+                }
+            }
+        }
+    }
+
     if count > 0 { sum / count as f64 } else { 0.0 }
 }
