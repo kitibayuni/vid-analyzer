@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let nonvocal_features = process_nonvocal_features(&nonvocals_rows);
     let video_features = process_video_features(&video_rows);
 
-    let combined = combine_features_filtered(
+    let mut combined = combine_features_filtered(
         &vocals_rows,
         &vocal_features,
         &nonvocals_rows,
@@ -72,6 +72,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         &video_rows,
         &video_features,
     );
+
+    scale_0_1_to_0_100(&mut combined);
 
     // Apply finalization (interpolation to 30 fps)
     let finalized = finalize_data(combined);
@@ -303,34 +305,44 @@ fn calculate_total_engag_raw_emas(combined: &mut Vec<HashMap<String, f64>>) {
         .map(|row| row.get("total_engag_raw").copied().unwrap_or(0.0))
         .collect();
     
-    let ema_1s_pct = calculate_ema_percentiles(&raw_values, 1.0);
-    let ema_5s_pct = calculate_ema_percentiles(&raw_values, 5.0);
-    let ema_10s_pct = calculate_ema_percentiles(&raw_values, 10.0);
-    let ema_30s_pct = calculate_ema_percentiles(&raw_values, 30.0);
+    // Debug: Check if we have non-zero raw values
+    let non_zero_count = raw_values.iter().filter(|&&x| x != 0.0).count();
+    println!("Debug: {} non-zero total_engag_raw values out of {}", non_zero_count, raw_values.len());
     
+    // Calculate EMAs first (raw values)
+    let ema_1s = calculate_ema_raw(&raw_values, 1.0);
+    let ema_5s = calculate_ema_raw(&raw_values, 5.0);
+    let ema_10s = calculate_ema_raw(&raw_values, 10.0);
+    let ema_30s = calculate_ema_raw(&raw_values, 30.0);
+    
+    // Convert each EMA series to percentiles (0.0 to 100.0 scale)
+    let ema_1s_pct = convert_to_percentiles(&ema_1s);
+    let ema_5s_pct = convert_to_percentiles(&ema_5s);
+    let ema_10s_pct = convert_to_percentiles(&ema_10s);
+    let ema_30s_pct = convert_to_percentiles(&ema_30s);
+    
+    // Insert the calculated percentile values
     for (i, row) in combined.iter_mut().enumerate() {
-        row.insert("total_engag_raw_ema_1s_pct".to_string(), ema_1s_pct[i]);
-        row.insert("total_engag_raw_ema_5s_pct".to_string(), ema_5s_pct[i]);
-        row.insert("total_engag_raw_ema_10s_pct".to_string(), ema_10s_pct[i]);
-        row.insert("total_engag_raw_ema_30s_pct".to_string(), ema_30s_pct[i]);
+        row.insert("total_engag_1s_pct".to_string(), ema_1s_pct[i]);
+        row.insert("total_engag_5s_pct".to_string(), ema_5s_pct[i]);
+        row.insert("total_engag_10s_pct".to_string(), ema_10s_pct[i]);
+        row.insert("total_engag_30s_pct".to_string(), ema_30s_pct[i]);
     }
 }
 
 // Combine features but only include engage EMA pct columns and attention data
 fn combine_features_filtered(
     vocals_rows: &[CsvRow],
-    _vocal_features: &HashMap<String, Vec<f64>>,  // No longer used
+    _vocal_features: &HashMap<String, Vec<f64>>,
     nonvocals_rows: &[CsvRow],
-    _nonvocal_features: &HashMap<String, Vec<f64>>,  // No longer used
+    _nonvocal_features: &HashMap<String, Vec<f64>>,
     video_rows: &[CsvRow],
-    _video_features: &HashMap<String, Vec<f64>>,  // No longer used
+    _video_features: &HashMap<String, Vec<f64>>,
 ) -> Vec<HashMap<String, f64>> {
-    // Create time-indexed maps for each dataset
     let vocals_by_time = create_time_index(vocals_rows);
     let nonvocals_by_time = create_time_index(nonvocals_rows);
     let video_by_time = create_time_index(video_rows);
 
-    // Get all unique timestamps
     let mut all_times: BTreeSet<OrderedFloat<f64>> = BTreeSet::new();
     all_times.extend(vocals_by_time.keys().copied());
     all_times.extend(nonvocals_by_time.keys().copied());
@@ -340,11 +352,9 @@ fn combine_features_filtered(
 
     for time_sec in all_times {
         let mut row = HashMap::new();
-        
-        // Add time_sec to the row
         row.insert("time_sec".to_string(), time_sec.0);
 
-        // Process vocals data for this timestamp
+        // Process vocals data
         if let Some(vocal_row) = vocals_by_time.get(&time_sec) {
             for (k, v) in &vocal_row.data {
                 if let Some(val) = *v {
@@ -355,7 +365,7 @@ fn combine_features_filtered(
             }
         }
 
-        // Process nonvocals data for this timestamp
+        // Process nonvocals data
         if let Some(nonvocal_row) = nonvocals_by_time.get(&time_sec) {
             for (k, v) in &nonvocal_row.data {
                 if let Some(val) = *v {
@@ -366,7 +376,7 @@ fn combine_features_filtered(
             }
         }
 
-        // Process video data for this timestamp
+        // Process video data
         if let Some(video_row) = video_by_time.get(&time_sec) {
             for (k, v) in &video_row.data {
                 if let Some(val) = *v {
@@ -377,17 +387,23 @@ fn combine_features_filtered(
             }
         }
 
-        // Calculate weighted engagement scores (legacy totalengagement) - REMOVED
-        // No longer calculating totalengagement, totalengagement_ema_1s_pct, totalengagement_ema_10s_pct
-
         combined.push(row);
     }
 
-    // After processing all timestamps, apply linear interpolation and calculate EMAs
+    // Debug: Check what we have after initial combination
+    debug_available_columns(&combined);
+
+    // Step 1: Apply interpolation and basic EMAs first
     apply_linear_interpolation_and_emas(&mut combined);
     
-    // Calculate total_engag_raw and its EMAs
+    // Debug: Check what we have after EMAs
+    println!("Debug: After EMAs, checking for required columns...");
+    debug_available_columns(&combined);
+    
+    // Step 2: Calculate total_engag_raw (depends on existing percentile columns)
     calculate_total_engag_raw(&mut combined);
+    
+    // Step 3: Calculate total_engag percentiles LAST (depends on total_engag_raw)
     calculate_total_engag_raw_emas(&mut combined);
 
     combined
@@ -700,13 +716,8 @@ fn calculate_ema_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
         }
     }
     
-    // Convert to percentiles (relative to max value)
-    let max_val = ema_values.iter().cloned().fold(0.0, f64::max);
-    if max_val > 0.0 {
-        ema_values.iter().map(|&v| (v / max_val) * 100.0).collect()
-    } else {
-        ema_values
-    }
+    // Use the new percentile conversion function for proper 0.0-100.0 scaling
+    convert_to_percentiles(&ema_values)
 }
 
 // Calculate raw EMA (for emotion engagement)
@@ -737,4 +748,89 @@ fn time_weighted_ema(values: &[f64], times: &[f64], tau: f64) -> Vec<f64> {
         ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1];
     }
     ema
+}
+
+fn convert_to_percentiles(values: &[f64]) -> Vec<f64> {
+    if values.is_empty() {
+        return Vec::new();
+    }
+    
+    // Find min and max values for normalization
+    let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    
+    // Handle edge case where all values are the same
+    if (max_val - min_val).abs() < f64::EPSILON {
+        return vec![50.0; values.len()]; // Return 50% if no variation
+    }
+    
+    // Scale to 0.0-100.0 range
+    values.iter()
+        .map(|&val| ((val - min_val) / (max_val - min_val)) * 100.0)
+        .collect()
+}
+
+fn debug_available_columns(combined: &[HashMap<String, f64>]) {
+    if let Some(first_row) = combined.first() {
+        let mut columns: Vec<String> = first_row.keys().cloned().collect();
+        columns.sort();
+        
+        println!("Debug: Available columns ({} total):", columns.len());
+        for (i, col) in columns.iter().enumerate() {
+            if i < 20 { // Show first 20 columns
+                let sample_val = first_row.get(col).copied().unwrap_or(0.0);
+                println!("  {}: {}", col, sample_val);
+            }
+        }
+        
+        // Look for specific engagement patterns
+        let engagement_cols: Vec<&String> = columns.iter()
+            .filter(|col| col.contains("engage") || col.contains("attention") || col.contains("visual"))
+            .collect();
+        
+        println!("Debug: Engagement-related columns ({}):", engagement_cols.len());
+        for col in engagement_cols.iter().take(10) {
+            let sample_val = first_row.get(*col).copied().unwrap_or(0.0);
+            println!("  {}: {}", col, sample_val);
+        }
+    }
+}
+
+fn scale_0_1_to_0_100(combined: &mut Vec<HashMap<String, f64>>) {
+    if combined.is_empty() {
+        return;
+    }
+    
+    // Get all column names
+    let column_names: Vec<String> = combined[0].keys().cloned().collect();
+    
+    for column_name in column_names {
+        // Skip time_sec and any column containing "attention"
+        if column_name == "time_sec" || column_name.contains("attention") {
+            continue;
+        }
+        
+        // Extract all values for this column
+        let values: Vec<f64> = combined.iter()
+            .map(|row| row.get(&column_name).copied().unwrap_or(0.0))
+            .collect();
+        
+        // Check if column is in 0-1 range (allowing small tolerance for floating point errors)
+        let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        
+        // If values are in 0-1 range (with small tolerance), scale to 0-100
+        if min_val >= -0.001 && max_val <= 1.001 && max_val > 0.001 {
+            println!(
+                "Scaling column '{}' from 0-1 to 0-100 range (min: {}, max: {})", 
+                column_name, min_val, max_val
+            );
+            
+            for row in combined.iter_mut() {
+                if let Some(value) = row.get_mut(&column_name) {
+                    *value = (*value).clamp(0.0, 1.0) * 100.0;
+                }
+            }
+        }
+    }
 }
