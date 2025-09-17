@@ -12,48 +12,68 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Default)]
 struct FrameData {
     time_sec: f64,
-    cat_engage_ema_1s_pct: f64,
-    cat_engage_ema_5s_pct: f64,
-    cat_engage_ema_10s_pct: f64,
-    transc_engage_ema_1s_pct: f64,
-    transc_engage_ema_5s_pct: f64,
-    transc_engage_ema_10s_pct: f64,
-    vocals_rms_energy_ema_1s: f64,
-    vocals_rms_energy_ema_5s: f64,
-    vocals_rms_energy_ema_10s: f64,
-    vocals_rms_energy_ema_1s_pct: f64,
-    vocals_rms_energy_ema_5s_pct: f64,
-    vocals_rms_energy_ema_10s_pct: f64,
-    vocals_spectral_ema_1s: f64,
-    vocals_spectral_ema_5s: f64,
-    vocals_spectral_ema_10s: f64,
-    vocals_spectral_ema_1s_pct: f64,
-    vocals_spectral_ema_5s_pct: f64,
-    vocals_spectral_ema_10s_pct: f64,
-    nonvocals_rms_energy_ema_1s: f64,
-    nonvocals_rms_energy_ema_5s: f64,
-    nonvocals_rms_energy_ema_10s: f64,
-    nonvocals_rms_energy_ema_1s_pct: f64,
-    nonvocals_rms_energy_ema_5s_pct: f64,
-    nonvocals_rms_energy_ema_10s_pct: f64,
-    nonvocals_spectral_ema_1s: f64,
-    nonvocals_spectral_ema_5s: f64,
-    nonvocals_spectral_ema_10s: f64,
-    nonvocals_spectral_ema_1s_pct: f64,
-    nonvocals_spectral_ema_5s_pct: f64,
-    nonvocals_spectral_ema_10s_pct: f64,
+    // Attention metrics
     attention_center_x: f64,
+    attention_center_x_ema_10s_pct: f64,
+    attention_center_x_ema_1s_pct: f64,
     attention_center_y: f64,
+    attention_center_y_ema_10s_pct: f64,
+    attention_center_y_ema_1s_pct: f64,
     attention_concentration: f64,
+    attention_concentration_ema_10s_pct: f64,
+    attention_concentration_ema_1s_pct: f64,
     attention_shift_rate: f64,
+    attention_shift_rate_ema_10s_pct: f64,
+    attention_shift_rate_ema_1s_pct: f64,
+    
+    // Engagement metrics
+    cat_engage_percentile: f64,
+    
+    // Channel 1 audio features
+    chan1_rms_energy_engage_ema_10s_pct: f64,
+    chan1_rms_energy_engage_ema_1s_pct: f64,
+    chan1_rms_energy_engage_ema_5s_pct: f64,
+    chan1_spectral_engage_ema_10s_pct: f64,
+    chan1_spectral_engage_ema_1s_pct: f64,
+    chan1_spectral_engage_ema_5s_pct: f64,
+    chan1_vfeats_engage_ema_10s_pct: f64,
+    chan1_vfeats_engage_ema_1s_pct: f64,
+    chan1_vfeats_engage_ema_5s_pct: f64,
+    
+    // Channel 2 audio features
+    chan2_rms_energy_engage_ema_10s_pct: f64,
+    chan2_rms_energy_engage_ema_1s_pct: f64,
+    chan2_rms_energy_engage_ema_5s_pct: f64,
+    chan2_spectral_engage_ema_10s_pct: f64,
+    chan2_spectral_engage_ema_1s_pct: f64,
+    chan2_spectral_engage_ema_5s_pct: f64,
+    chan2_vfeats_engage_ema_10s_pct: f64,
+    chan2_vfeats_engage_ema_1s_pct: f64,
+    chan2_vfeats_engage_ema_5s_pct: f64,
+    
+    // Emotion and other metrics
+    emotion_engage_10s_pct: f64,
+    emotion_engage_1s_pct: f64,
+    
+    // Non-vocal channel 1 features
+    nonvocal_chan1_rms_energy_engage_ema_10s_pct: f64,
+    nonvocal_chan1_rms_energy_engage_ema_1s_pct: f64,
+    nonvocal_chan1_rms_energy_engage_ema_5s_pct: f64,
+    nonvocal_chan1_spectral_engage_ema_10s_pct: f64,
+    nonvocal_chan1_spectral_engage_ema_1s_pct: f64,
+    nonvocal_chan1_spectral_engage_ema_5s_pct: f64,
+    
+    // Total engagement
+    total_engag_raw: f64,
+    total_engag_raw_ema_10s_pct: f64,
+    total_engag_raw_ema_1s_pct: f64,
+    total_engag_raw_ema_30s_pct: f64,
+    total_engag_raw_ema_5s_pct: f64,
+    
+    // Visual engagement
+    visual_engage_ema_10s_pct: f64,
     visual_engage_ema_1s_pct: f64,
     visual_engage_ema_3s_pct: f64,
-    visual_engage_ema_10s_pct: f64,
-    visual_engage_ema_1s: f64,
-    visual_engage_ema_3s: f64,
-    visual_engage_ema_10s: f64,
-    total_engagement: f64,
-    total_engagement_pct: f64,
 }
 
 fn safe_parse_f64(s: &str) -> f64 {
@@ -80,7 +100,7 @@ fn load_csv_data(csv_path: &str) -> Result<Vec<FrameData>> {
             Ok(record) => {
                 let mut data = FrameData::default();
                 
-                // Map columns by name, handling variations
+                // Map columns by exact header name
                 for (i, header) in headers.iter().enumerate() {
                     if let Some(value) = record.get(i) {
                         let val = safe_parse_f64(value);
@@ -89,66 +109,68 @@ fn load_csv_data(csv_path: &str) -> Result<Vec<FrameData>> {
                             // Time
                             "time_sec" => data.time_sec = val,
                             
-                            // Cat engagement - look for variations
-                            h if h.contains("cat") && h.contains("engage_ema_1s_pct") => data.cat_engage_ema_1s_pct = val,
-                            h if h.contains("cat") && h.contains("engage_ema_5s_pct") => data.cat_engage_ema_5s_pct = val,
-                            h if h.contains("cat") && h.contains("engage_ema_10s_pct") => data.cat_engage_ema_10s_pct = val,
+                            // Attention metrics
+                            "attention_center_x" => data.attention_center_x = val,
+                            "attention_center_x_ema_10s_pct" => data.attention_center_x_ema_10s_pct = val,
+                            "attention_center_x_ema_1s_pct" => data.attention_center_x_ema_1s_pct = val,
+                            "attention_center_y" => data.attention_center_y = val,
+                            "attention_center_y_ema_10s_pct" => data.attention_center_y_ema_10s_pct = val,
+                            "attention_center_y_ema_1s_pct" => data.attention_center_y_ema_1s_pct = val,
+                            "attention_concentration" => data.attention_concentration = val,
+                            "attention_concentration_ema_10s_pct" => data.attention_concentration_ema_10s_pct = val,
+                            "attention_concentration_ema_1s_pct" => data.attention_concentration_ema_1s_pct = val,
+                            "attention_shift_rate" => data.attention_shift_rate = val,
+                            "attention_shift_rate_ema_10s_pct" => data.attention_shift_rate_ema_10s_pct = val,
+                            "attention_shift_rate_ema_1s_pct" => data.attention_shift_rate_ema_1s_pct = val,
                             
-                            // Transcription engagement
-                            h if h.contains("transc") && h.contains("engage_ema_1s_pct") => data.transc_engage_ema_1s_pct = val,
-                            h if h.contains("transc") && h.contains("engage_ema_5s_pct") => data.transc_engage_ema_5s_pct = val,
-                            h if h.contains("transc") && h.contains("engage_ema_10s_pct") => data.transc_engage_ema_10s_pct = val,
+                            // Engagement
+                            "cat_engage_percentile" => data.cat_engage_percentile = val,
                             
-                            // Vocals RMS Energy
-                            h if h.contains("vocals") && h.contains("rms_energy_ema_1s") && !h.contains("pct") => data.vocals_rms_energy_ema_1s = val,
-                            h if h.contains("vocals") && h.contains("rms_energy_ema_5s") && !h.contains("pct") => data.vocals_rms_energy_ema_5s = val,
-                            h if h.contains("vocals") && h.contains("rms_energy_ema_10s") && !h.contains("pct") => data.vocals_rms_energy_ema_10s = val,
-                            h if h.contains("vocals") && h.contains("rms_energy_ema_1s_pct") => data.vocals_rms_energy_ema_1s_pct = val,
-                            h if h.contains("vocals") && h.contains("rms_energy_ema_5s_pct") => data.vocals_rms_energy_ema_5s_pct = val,
-                            h if h.contains("vocals") && h.contains("rms_energy_ema_10s_pct") => data.vocals_rms_energy_ema_10s_pct = val,
+                            // Channel 1 audio features
+                            "chan1_rms_energy_engage_ema_10s_pct" => data.chan1_rms_energy_engage_ema_10s_pct = val,
+                            "chan1_rms_energy_engage_ema_1s_pct" => data.chan1_rms_energy_engage_ema_1s_pct = val,
+                            "chan1_rms_energy_engage_ema_5s_pct" => data.chan1_rms_energy_engage_ema_5s_pct = val,
+                            "chan1_spectral_engage_ema_10s_pct" => data.chan1_spectral_engage_ema_10s_pct = val,
+                            "chan1_spectral_engage_ema_1s_pct" => data.chan1_spectral_engage_ema_1s_pct = val,
+                            "chan1_spectral_engage_ema_5s_pct" => data.chan1_spectral_engage_ema_5s_pct = val,
+                            "chan1_vfeats_engage_ema_10s_pct" => data.chan1_vfeats_engage_ema_10s_pct = val,
+                            "chan1_vfeats_engage_ema_1s_pct" => data.chan1_vfeats_engage_ema_1s_pct = val,
+                            "chan1_vfeats_engage_ema_5s_pct" => data.chan1_vfeats_engage_ema_5s_pct = val,
                             
-                            // Vocals Spectral
-                            h if h.contains("vocals") && h.contains("spectral_ema_1s") && !h.contains("pct") => data.vocals_spectral_ema_1s = val,
-                            h if h.contains("vocals") && h.contains("spectral_ema_5s") && !h.contains("pct") => data.vocals_spectral_ema_5s = val,
-                            h if h.contains("vocals") && h.contains("spectral_ema_10s") && !h.contains("pct") => data.vocals_spectral_ema_10s = val,
-                            h if h.contains("vocals") && h.contains("spectral_ema_1s_pct") => data.vocals_spectral_ema_1s_pct = val,
-                            h if h.contains("vocals") && h.contains("spectral_ema_5s_pct") => data.vocals_spectral_ema_5s_pct = val,
-                            h if h.contains("vocals") && h.contains("spectral_ema_10s_pct") => data.vocals_spectral_ema_10s_pct = val,
+                            // Channel 2 audio features
+                            "chan2_rms_energy_engage_ema_10s_pct" => data.chan2_rms_energy_engage_ema_10s_pct = val,
+                            "chan2_rms_energy_engage_ema_1s_pct" => data.chan2_rms_energy_engage_ema_1s_pct = val,
+                            "chan2_rms_energy_engage_ema_5s_pct" => data.chan2_rms_energy_engage_ema_5s_pct = val,
+                            "chan2_spectral_engage_ema_10s_pct" => data.chan2_spectral_engage_ema_10s_pct = val,
+                            "chan2_spectral_engage_ema_1s_pct" => data.chan2_spectral_engage_ema_1s_pct = val,
+                            "chan2_spectral_engage_ema_5s_pct" => data.chan2_spectral_engage_ema_5s_pct = val,
+                            "chan2_vfeats_engage_ema_10s_pct" => data.chan2_vfeats_engage_ema_10s_pct = val,
+                            "chan2_vfeats_engage_ema_1s_pct" => data.chan2_vfeats_engage_ema_1s_pct = val,
+                            "chan2_vfeats_engage_ema_5s_pct" => data.chan2_vfeats_engage_ema_5s_pct = val,
                             
-                            // Nonvocals RMS Energy
-                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_1s") && !h.contains("pct") => data.nonvocals_rms_energy_ema_1s = val,
-                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_5s") && !h.contains("pct") => data.nonvocals_rms_energy_ema_5s = val,
-                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_10s") && !h.contains("pct") => data.nonvocals_rms_energy_ema_10s = val,
-                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_1s_pct") => data.nonvocals_rms_energy_ema_1s_pct = val,
-                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_5s_pct") => data.nonvocals_rms_energy_ema_5s_pct = val,
-                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_10s_pct") => data.nonvocals_rms_energy_ema_10s_pct = val,
+                            // Emotion
+                            "emotion_engage_10s_pct" => data.emotion_engage_10s_pct = val,
+                            "emotion_engage_1s_pct" => data.emotion_engage_1s_pct = val,
                             
-                            // Nonvocals Spectral
-                            h if h.contains("nonvocals") && h.contains("spectral_ema_1s") && !h.contains("pct") => data.nonvocals_spectral_ema_1s = val,
-                            h if h.contains("nonvocals") && h.contains("spectral_ema_5s") && !h.contains("pct") => data.nonvocals_spectral_ema_5s = val,
-                            h if h.contains("nonvocals") && h.contains("spectral_ema_10s") && !h.contains("pct") => data.nonvocals_spectral_ema_10s = val,
-                            h if h.contains("nonvocals") && h.contains("spectral_ema_1s_pct") => data.nonvocals_spectral_ema_1s_pct = val,
-                            h if h.contains("nonvocals") && h.contains("spectral_ema_5s_pct") => data.nonvocals_spectral_ema_5s_pct = val,
-                            h if h.contains("nonvocals") && h.contains("spectral_ema_10s_pct") => data.nonvocals_spectral_ema_10s_pct = val,
-                            
-                            // Attention
-                            h if h.contains("attention_center_x") => data.attention_center_x = val,
-                            h if h.contains("attention_center_y") => data.attention_center_y = val,
-                            h if h.contains("attention_concentration") => data.attention_concentration = val,
-                            h if h.contains("attention_shift_rate") => data.attention_shift_rate = val,
-                            
-                            // Visual engagement
-                            h if h.contains("visual_engage_ema_1s_pct") => data.visual_engage_ema_1s_pct = val,
-                            h if h.contains("visual_engage_ema_3s_pct") => data.visual_engage_ema_3s_pct = val,
-                            h if h.contains("visual_engage_ema_10s_pct") => data.visual_engage_ema_10s_pct = val,
-                            h if h.contains("visual_engage_ema_1s") && !h.contains("pct") => data.visual_engage_ema_1s = val,
-                            h if h.contains("visual_engage_ema_3s") && !h.contains("pct") => data.visual_engage_ema_3s = val,
-                            h if h.contains("visual_engage_ema_10s") && !h.contains("pct") => data.visual_engage_ema_10s = val,
+                            // Non-vocal channel 1
+                            "nonvocal_chan1_rms_energy_engage_ema_10s_pct" => data.nonvocal_chan1_rms_energy_engage_ema_10s_pct = val,
+                            "nonvocal_chan1_rms_energy_engage_ema_1s_pct" => data.nonvocal_chan1_rms_energy_engage_ema_1s_pct = val,
+                            "nonvocal_chan1_rms_energy_engage_ema_5s_pct" => data.nonvocal_chan1_rms_energy_engage_ema_5s_pct = val,
+                            "nonvocal_chan1_spectral_engage_ema_10s_pct" => data.nonvocal_chan1_spectral_engage_ema_10s_pct = val,
+                            "nonvocal_chan1_spectral_engage_ema_1s_pct" => data.nonvocal_chan1_spectral_engage_ema_1s_pct = val,
+                            "nonvocal_chan1_spectral_engage_ema_5s_pct" => data.nonvocal_chan1_spectral_engage_ema_5s_pct = val,
                             
                             // Total engagement
-                            h if h.contains("total_engagement_score") => data.total_engagement = val,
-                            h if h.contains("total_engagement_percentile") => data.total_engagement_pct = val,
-                            h if h.contains("total_engagement") && !h.contains("score") && !h.contains("percentile") => data.total_engagement = val,
+                            "total_engag_raw" => data.total_engag_raw = val,
+                            "total_engag_raw_ema_10s_pct" => data.total_engag_raw_ema_10s_pct = val,
+                            "total_engag_raw_ema_1s_pct" => data.total_engag_raw_ema_1s_pct = val,
+                            "total_engag_raw_ema_30s_pct" => data.total_engag_raw_ema_30s_pct = val,
+                            "total_engag_raw_ema_5s_pct" => data.total_engag_raw_ema_5s_pct = val,
+                            
+                            // Visual engagement
+                            "visual_engage_ema_10s_pct" => data.visual_engage_ema_10s_pct = val,
+                            "visual_engage_ema_1s_pct" => data.visual_engage_ema_1s_pct = val,
+                            "visual_engage_ema_3s_pct" => data.visual_engage_ema_3s_pct = val,
                             
                             _ => {} // Ignore unrecognized columns
                         }
@@ -157,9 +179,9 @@ fn load_csv_data(csv_path: &str) -> Result<Vec<FrameData>> {
                 
                 // Debug output for first few rows
                 if row_num < 3 {
-                    println!("Row {}: cat_1s={}, cat_5s={}, cat_10s={}, total={}", 
-                        row_num, data.cat_engage_ema_1s_pct, data.cat_engage_ema_5s_pct, 
-                        data.cat_engage_ema_10s_pct, data.total_engagement);
+                    println!("Row {}: time={:.3}, cat_engage={:.2}, total_1s={:.2}, visual_1s={:.2}", 
+                        row_num, data.time_sec, data.cat_engage_percentile, 
+                        data.total_engag_raw_ema_1s_pct, data.visual_engage_ema_1s_pct);
                 }
                 
                 frame_data.push(data);
@@ -203,8 +225,8 @@ fn main() -> Result<()> {
     let height = cap.get(videoio::CAP_PROP_FRAME_HEIGHT)? as i32;
 
     let top_bar_height = 60;
-    let bottom_bar_height = 300; // Increased for more engagement bars
-    let right_bar_width = 300;
+    let bottom_bar_height = 350; // Increased for more engagement bars
+    let right_bar_width = 350; // Increased for more metrics
 
     let full_width = width + right_bar_width;
     let full_height = height + top_bar_height + bottom_bar_height;
@@ -222,11 +244,11 @@ fn main() -> Result<()> {
         true
     )?;
 
-    // Attention smoothing and trail
+    // Attention smoothing and trail - using the higher data rate (30fps)
     let mut last_x = scaled_video_width / 2;
     let mut last_y = scaled_video_height / 2 + top_bar_height;
-    let movement_amplifier = 20.0;
-    let trail_length = 15;
+    let movement_amplifier = 15.0; // Reduced since we have more data points
+    let trail_length = 20; // Increased for smoother trails
     let mut trail: Vec<(i32, i32)> = Vec::new();
 
     // Dynamic center calculation for 5-second windows
@@ -240,10 +262,12 @@ fn main() -> Result<()> {
         }
 
         let current_time = frame_idx as f64 / fps;
+        
+        // With 30 data points per second, find the closest data point
         let data = frame_data.iter()
-            .min_by(|a,b| ((a.time_sec - current_time).abs())
+            .min_by(|a, b| ((a.time_sec - current_time).abs())
                 .partial_cmp(&(b.time_sec - current_time).abs()).unwrap())
-            .unwrap()
+            .unwrap_or(&FrameData::default())
             .clone();
 
         // Calculate dynamic center based on 5-second window average
@@ -286,7 +310,7 @@ fn main() -> Result<()> {
         // --- Draw overlay elements ---
         draw_top_bar(&mut canvas, &data, full_width, top_bar_height)?;
         draw_bottom_engagement_bars(&mut canvas, &data, full_width, bottom_bar_height, full_height)?;
-        draw_right_vertical_bars(&mut canvas, &data, width, top_bar_height, scaled_video_height)?;
+        draw_right_vertical_bars(&mut canvas, &data, width, top_bar_height, scaled_video_height, right_bar_width)?;
 
         // --- Calculate attention point coordinates with dynamic centering ---
         let center_x = scaled_video_width / 2;
@@ -302,9 +326,9 @@ fn main() -> Result<()> {
         y = y.clamp(0, scaled_video_height-1);
         y += top_bar_height;
 
-        // Smooth movement
-        x = ((0.4 * last_x as f64 + 0.6 * x as f64) as i32).clamp(0, scaled_video_width-1);
-        y = ((0.4 * last_y as f64 + 0.6 * y as f64) as i32).clamp(top_bar_height, top_bar_height + scaled_video_height-1);
+        // Smooth movement (less smoothing due to higher data rate)
+        x = ((0.2 * last_x as f64 + 0.8 * x as f64) as i32).clamp(0, scaled_video_width-1);
+        y = ((0.2 * last_y as f64 + 0.8 * y as f64) as i32).clamp(top_bar_height, top_bar_height + scaled_video_height-1);
         last_x = x;
         last_y = y;
 
@@ -313,7 +337,7 @@ fn main() -> Result<()> {
         if trail.len() > trail_length { trail.remove(0); }
         for (i, &(tx, ty)) in trail.iter().enumerate() {
             let alpha = i as f64 / trail.len() as f64;
-            let radius = (5.0 + alpha * 10.0) as i32;
+            let radius = (3.0 + alpha * 8.0) as i32;
             imgproc::circle(
                 &mut canvas,
                 core::Point::new(tx, ty),
@@ -346,15 +370,19 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// --- Top Bar (keeping original audio-related bars) ---
+// --- Top Bar (audio-related bars using new channel data) ---
 fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> Result<()> {
-    let bar_width = (width / 6) as i32;
-    let spacing = 20;
+    let bar_width = (width / 8) as i32;
+    let spacing = 10;
     let bars = [
-        (data.vocals_rms_energy_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)),
-        (data.vocals_spectral_ema_1s_pct / 100.0, core::Scalar::new(0.0, 0.0, 255.0, 0.0)),
-        (data.nonvocals_rms_energy_ema_1s_pct / 100.0, core::Scalar::new(255.0, 0.0, 0.0, 0.0))
+        (data.chan1_rms_energy_engage_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green - Chan1 RMS
+        (data.chan1_spectral_engage_ema_1s_pct / 100.0, core::Scalar::new(0.0, 0.0, 255.0, 0.0)), // Red - Chan1 Spectral
+        (data.chan2_rms_energy_engage_ema_1s_pct / 100.0, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan - Chan2 RMS
+        (data.chan2_spectral_engage_ema_1s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta - Chan2 Spectral
+        (data.nonvocal_chan1_rms_energy_engage_ema_1s_pct / 100.0, core::Scalar::new(255.0, 0.0, 0.0, 0.0)), // Blue - Nonvocal RMS
+        (data.emotion_engage_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow - Emotion
     ];
+    
     for (i, &(value, color)) in bars.iter().enumerate() {
         let h = (value * height as f64) as i32;
         imgproc::rectangle(frame,
@@ -371,20 +399,24 @@ fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> R
 // --- Bottom Engagement Bars ---
 fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bottom_height: i32, full_height: i32) -> Result<()> {
     let y_start = full_height - bottom_height;
-    let bar_height = 20;
-    let spacing = 8;
-    let max_bar_width = width / 2 - 80; // Space for labels and values
+    let bar_height = 18;
+    let spacing = 6;
+    let max_bar_width = width / 2 - 100; // Space for labels and values
 
-    // Engagement categories with their 1s and 10s percentile values
+    // Updated engagement categories with new data structure
     let engagement_data = [
-        ("Cat", data.cat_engage_ema_1s_pct / 100.0, data.cat_engage_ema_10s_pct / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
-        ("Transc", data.transc_engage_ema_1s_pct / 100.0, data.transc_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
+        ("Cat", data.cat_engage_percentile / 100.0, data.cat_engage_percentile / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
         ("Visual", data.visual_engage_ema_1s_pct / 100.0, data.visual_engage_ema_10s_pct / 100.0, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
-        ("Vocals RMS", data.vocals_rms_energy_ema_1s_pct / 100.0, data.vocals_rms_energy_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
-        ("Vocals Spec", data.vocals_spectral_ema_1s_pct / 100.0, data.vocals_spectral_ema_10s_pct / 100.0, core::Scalar::new(128.0, 0.0, 255.0, 0.0)), // Purple
-        ("NonVoc RMS", data.nonvocals_rms_energy_ema_1s_pct / 100.0, data.nonvocals_rms_energy_ema_10s_pct / 100.0, core::Scalar::new(255.0, 128.0, 0.0, 0.0)), // Orange
-        ("NonVoc Spec", data.nonvocals_spectral_ema_1s_pct / 100.0, data.nonvocals_spectral_ema_10s_pct / 100.0, core::Scalar::new(0.0, 128.0, 255.0, 0.0)), // Light Blue
-        ("Total", data.total_engagement_pct / 100.0, data.total_engagement_pct / 100.0, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
+        ("Total", data.total_engag_raw_ema_1s_pct / 100.0, data.total_engag_raw_ema_10s_pct / 100.0, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
+        ("Ch1 RMS", data.chan1_rms_energy_engage_ema_1s_pct / 100.0, data.chan1_rms_energy_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
+        ("Ch1 Spec", data.chan1_spectral_engage_ema_1s_pct / 100.0, data.chan1_spectral_engage_ema_10s_pct / 100.0, core::Scalar::new(128.0, 0.0, 255.0, 0.0)), // Purple
+        ("Ch1 VFeat", data.chan1_vfeats_engage_ema_1s_pct / 100.0, data.chan1_vfeats_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 128.0, 0.0, 0.0)), // Orange
+        ("Ch2 RMS", data.chan2_rms_energy_engage_ema_1s_pct / 100.0, data.chan2_rms_energy_engage_ema_10s_pct / 100.0, core::Scalar::new(0.0, 128.0, 255.0, 0.0)), // Light Blue
+        ("Ch2 Spec", data.chan2_spectral_engage_ema_1s_pct / 100.0, data.chan2_spectral_engage_ema_10s_pct / 100.0, core::Scalar::new(128.0, 255.0, 0.0, 0.0)), // Light Green
+        ("Ch2 VFeat", data.chan2_vfeats_engage_ema_1s_pct / 100.0, data.chan2_vfeats_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 128.0, 0.0)), // Pink
+        ("NonVoc RMS", data.nonvocal_chan1_rms_energy_engage_ema_1s_pct / 100.0, data.nonvocal_chan1_rms_energy_engage_ema_10s_pct / 100.0, core::Scalar::new(128.0, 128.0, 255.0, 0.0)), // Light Purple
+        ("NonVoc Spec", data.nonvocal_chan1_spectral_engage_ema_1s_pct / 100.0, data.nonvocal_chan1_spectral_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 128.0, 128.0, 0.0)), // Light Red
+        ("Emotion", data.emotion_engage_1s_pct / 100.0, data.emotion_engage_10s_pct / 100.0, core::Scalar::new(128.0, 255.0, 128.0, 0.0)), // Light Green
     ];
 
     for (i, &(label, val_1s, val_10s, color)) in engagement_data.iter().enumerate() {
@@ -394,7 +426,7 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
         let bar_width_1s = (val_1s * max_bar_width as f64) as i32;
         imgproc::rectangle(
             frame,
-            core::Rect::new(70, y, bar_width_1s, bar_height),
+            core::Rect::new(90, y, bar_width_1s, bar_height),
             color,
             -1,
             imgproc::LINE_8,
@@ -407,7 +439,7 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
             &format!("{}1s", label),
             core::Point::new(5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.4,
+            0.35,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
@@ -417,10 +449,10 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
         // Value for 1s
         imgproc::put_text(
             frame,
-            &format!("{:.2}", val_1s * 100.0),
-            core::Point::new(70 + bar_width_1s + 5, y + bar_height - 4),
+            &format!("{:.1}", val_1s * 100.0),
+            core::Point::new(90 + bar_width_1s + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.4,
+            0.35,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
@@ -428,7 +460,7 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
         )?;
 
         // Right side - 10s EMA percentile
-        let x_start_10s = width / 2 + 70;
+        let x_start_10s = width / 2 + 90;
         let bar_width_10s = (val_10s * max_bar_width as f64) as i32;
         imgproc::rectangle(
             frame,
@@ -445,7 +477,7 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
             &format!("{}10s", label),
             core::Point::new(width / 2 + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.4,
+            0.35,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
@@ -455,10 +487,10 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
         // Value for 10s
         imgproc::put_text(
             frame,
-            &format!("{:.2}", val_10s * 100.0),
+            &format!("{:.1}", val_10s * 100.0),
             core::Point::new(x_start_10s + bar_width_10s + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.4,
+            0.35,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
@@ -470,20 +502,24 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
 }
 
 // --- Right Vertical Bars ---
-fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height: i32, video_height: i32) -> Result<()> {
-    let x_start = width + 10;
-    let bar_width = 30;
-    let spacing = 35;
+fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_bar_height: i32, video_height: i32, right_bar_width: i32) -> Result<()> {
+    let x_start = width + 15;
+    let bar_width = 25;
+    let spacing = 30;
     let max_bar_height = video_height - 40; // Leave some padding
 
-    // Vertical bars for key metrics
+    // Vertical bars for key metrics using new data structure
     let vertical_bars = [
-        ("Attn", data.attention_concentration / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
-        ("Shift", data.attention_shift_rate / 100.0, core::Scalar::new(255.0, 0.0, 0.0, 0.0)), // Red
-        ("TotEng", data.total_engagement_pct / 100.0, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
-        ("V1s", data.visual_engage_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
-        ("V3s", data.visual_engage_ema_3s_pct / 100.0, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
-        ("V10s", data.visual_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
+        ("AttnCon", data.attention_concentration_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green - Attention Concentration
+        ("AttnShf", data.attention_shift_rate_ema_1s_pct / 100.0, core::Scalar::new(255.0, 0.0, 0.0, 0.0)), // Blue - Attention Shift
+        ("TotEng", data.total_engag_raw_ema_1s_pct / 100.0, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White - Total Engagement
+        ("Vis1s", data.visual_engage_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow - Visual 1s
+        ("Vis3s", data.visual_engage_ema_3s_pct / 100.0, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan - Visual 3s
+        ("Vis10s", data.visual_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta - Visual 10s
+        ("Cat", data.cat_engage_percentile / 100.0, core::Scalar::new(128.0, 255.0, 0.0, 0.0)), // Light Green - Cat Engagement
+        ("Emot1s", data.emotion_engage_1s_pct / 100.0, core::Scalar::new(255.0, 128.0, 0.0, 0.0)), // Orange - Emotion 1s
+        ("Emot10s", data.emotion_engage_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 128.0, 0.0)), // Pink - Emotion 10s
+        ("Tot30s", data.total_engag_raw_ema_30s_pct / 100.0, core::Scalar::new(128.0, 128.0, 255.0, 0.0)), // Light Purple - Total 30s
     ];
 
     for (i, &(label, value, color)) in vertical_bars.iter().enumerate() {
@@ -502,13 +538,13 @@ fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_b
             0
         )?;
 
-        // Label at bottom
+        // Label at bottom (rotated text would be ideal, but using abbreviated labels)
         imgproc::put_text(
             frame,
             label,
-            core::Point::new(x - 5, y_bottom + 15),
+            core::Point::new(x - 8, y_bottom + 15),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.4,
+            0.3,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
@@ -518,16 +554,54 @@ fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_b
         // Value at top
         imgproc::put_text(
             frame,
-            &format!("{:.2}", value * 100.0),
-            core::Point::new(x - 10, y_top - 5),
+            &format!("{:.1}", value * 100.0),
+            core::Point::new(x - 8, y_top - 5),
             imgproc::FONT_HERSHEY_SIMPLEX,
-            0.3,
+            0.25,
             core::Scalar::new(255.0, 255.0, 255.0, 0.0),
             1,
             imgproc::LINE_8,
             false
         )?;
     }
+
+    // Add attention center coordinates display
+    let coord_y_start = top_bar_height + 20;
+    imgproc::put_text(
+        frame,
+        &format!("Attn X: {:.3}", data.attention_center_x),
+        core::Point::new(width + 10, coord_y_start),
+        imgproc::FONT_HERSHEY_SIMPLEX,
+        0.4,
+        core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+        1,
+        imgproc::LINE_8,
+        false
+    )?;
+
+    imgproc::put_text(
+        frame,
+        &format!("Attn Y: {:.3}", data.attention_center_y),
+        core::Point::new(width + 10, coord_y_start + 20),
+        imgproc::FONT_HERSHEY_SIMPLEX,
+        0.4,
+        core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+        1,
+        imgproc::LINE_8,
+        false
+    )?;
+
+    imgproc::put_text(
+        frame,
+        &format!("Time: {:.2}s", data.time_sec),
+        core::Point::new(width + 10, coord_y_start + 40),
+        imgproc::FONT_HERSHEY_SIMPLEX,
+        0.4,
+        core::Scalar::new(255.0, 255.0, 255.0, 0.0),
+        1,
+        imgproc::LINE_8,
+        false
+    )?;
 
     Ok(())
 }
