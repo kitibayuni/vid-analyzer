@@ -32,8 +32,6 @@ const WEIGHTS_RAW: &[(&str, f64)] = &[
     ("video", 0.25),
 ];
 
-// Legacy weights removed - no longer using totalengagement calculation
-
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 7 {
@@ -223,6 +221,33 @@ fn interpolate_nans(vals: &[f64]) -> Vec<f64> {
     out
 }
 
+// Time-weighted EMA calculation that accounts for actual time intervals
+fn time_weighted_ema(values: &[f64], times: &[f64], tau: f64) -> Vec<f64> {
+    let mut ema = vec![0.0; values.len()];
+    if values.is_empty() || times.is_empty() || values.len() != times.len() {
+        return ema;
+    }
+    
+    ema[0] = values[0]; // start EMA at first value
+    
+    // Debug: Print time intervals for first few samples
+    if values.len() > 5 {
+        println!("Debug: Time intervals for tau={}s:", tau);
+        for i in 1..std::cmp::min(6, times.len()) {
+            let dt = times[i] - times[i - 1];
+            let alpha = 1.0 - (-dt / tau).exp();
+            println!("  Sample {}: dt={:.4}s, alpha={:.4}", i, dt, alpha);
+        }
+    }
+    
+    for i in 1..values.len() {
+        let dt = times[i] - times[i - 1];
+        let alpha = 1.0 - (-dt / tau).exp(); // continuous-time EMA
+        ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1];
+    }
+    ema
+}
+
 // Helper function to get channel-averaged value for a specific pattern
 fn get_channel_averaged_value(row: &HashMap<String, f64>, pattern: &str, suffix: &str) -> f64 {
     let chan1_key = format!("chan1_{}{}", pattern, suffix);
@@ -298,28 +323,27 @@ fn calculate_total_engag_raw(combined: &mut Vec<HashMap<String, f64>>) {
     });
 }
 
-// Calculate EMAs for total_engag_raw (1s, 5s, 10s, 30s percentiles)
+// Fixed EMA percentile calculation for total_engag_raw with time awareness
 fn calculate_total_engag_raw_emas(combined: &mut Vec<HashMap<String, f64>>) {
     let raw_values: Vec<f64> = combined
         .iter()
         .map(|row| row.get("total_engag_raw").copied().unwrap_or(0.0))
         .collect();
     
+    let time_values: Vec<f64> = combined
+        .iter()
+        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
+        .collect();
+    
     // Debug: Check if we have non-zero raw values
     let non_zero_count = raw_values.iter().filter(|&&x| x != 0.0).count();
     println!("Debug: {} non-zero total_engag_raw values out of {}", non_zero_count, raw_values.len());
     
-    // Calculate EMAs first (raw values)
-    let ema_1s = calculate_ema_raw(&raw_values, 1.0);
-    let ema_5s = calculate_ema_raw(&raw_values, 5.0);
-    let ema_10s = calculate_ema_raw(&raw_values, 10.0);
-    let ema_30s = calculate_ema_raw(&raw_values, 30.0);
-    
-    // Convert each EMA series to percentiles (0.0 to 100.0 scale)
-    let ema_1s_pct = convert_to_percentiles(&ema_1s);
-    let ema_5s_pct = convert_to_percentiles(&ema_5s);
-    let ema_10s_pct = convert_to_percentiles(&ema_10s);
-    let ema_30s_pct = convert_to_percentiles(&ema_30s);
+    // Calculate time-aware EMAs with proper percentile conversion
+    let ema_1s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 1.0);
+    let ema_5s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 5.0);
+    let ema_10s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 10.0);
+    let ema_30s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 30.0);
     
     // Insert the calculated percentile values
     for (i, row) in combined.iter_mut().enumerate() {
@@ -365,12 +389,17 @@ fn combine_features_filtered(
             }
         }
 
-        // Process nonvocals data
+        // Process nonvocals data with prefix
         if let Some(nonvocal_row) = nonvocals_by_time.get(&time_sec) {
             for (k, v) in &nonvocal_row.data {
                 if let Some(val) = *v {
                     if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
-                        row.insert(format!("nonvocal_{}", k), val);
+                        let prefixed_key = if k.starts_with("nonvocal_") {
+                            k.clone()
+                        } else {
+                            format!("nonvocal_{}", k)
+                        };
+                        row.insert(prefixed_key, val);
                     }
                 }
             }
@@ -539,9 +568,6 @@ fn interpolate_at_time(times: &[f64], values: &[f64], target_time: f64) -> f64 {
     v0 + ratio * (v1 - v0)
 }
 
-// Functions get_feature_value_at_time, get_video_feature_value_at_time, and calculate_ema_at_time 
-// have been removed as they were only used for the old totalengagement calculation
-
 // Apply linear interpolation to all columns and calculate EMAs (parallelized)
 fn apply_linear_interpolation_and_emas(combined: &mut Vec<HashMap<String, f64>>) {
     if combined.is_empty() {
@@ -651,8 +677,14 @@ fn interpolate_column_values(values: &mut Vec<Option<f64>>) {
     }
 }
 
-// Calculate EMA percentiles for attention columns
+// Calculate EMA percentiles for attention columns with time awareness
 fn calculate_attention_emas(combined: &mut Vec<HashMap<String, f64>>) {
+    // Extract time values once
+    let time_values: Vec<f64> = combined
+        .iter()
+        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
+        .collect();
+    
     // Find all attention column names
     let attention_columns: Vec<String> = combined
         .iter()
@@ -668,8 +700,8 @@ fn calculate_attention_emas(combined: &mut Vec<HashMap<String, f64>>) {
             .map(|row| row.get(&attention_col).copied().unwrap_or(0.0))
             .collect();
         
-        let ema_1s_pct = calculate_ema_percentiles(&values, 1.0);
-        let ema_10s_pct = calculate_ema_percentiles(&values, 10.0);
+        let ema_1s_pct = calculate_time_aware_ema_with_percentiles(&values, &time_values, 1.0);
+        let ema_10s_pct = calculate_time_aware_ema_with_percentiles(&values, &time_values, 10.0);
         
         let col_1s = format!("{}_ema_1s_pct", attention_col);
         let col_10s = format!("{}_ema_10s_pct", attention_col);
@@ -681,12 +713,19 @@ fn calculate_attention_emas(combined: &mut Vec<HashMap<String, f64>>) {
     }
 }
 
-// Calculate emotion engagement EMAs from cat_engage_percentile
+// Calculate emotion engagement EMAs from cat_engage_percentile with time awareness
 fn calculate_emotion_engagement_emas(combined: &mut Vec<HashMap<String, f64>>) {
-    // Find cat_engage_percentile values
+    // Extract time values
+    let time_values: Vec<f64> = combined
+        .iter()
+        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
+        .collect();
+    
+    // Find cat_engage_percentile values (including nonvocal_cat_engage_percentile)
     let cat_values: Vec<f64> = combined
         .iter()
         .map(|row| {
+            // Look for cat_engage_percentile in vocals/video or nonvocal_cat_engage_percentile
             row.keys()
                 .find(|key| key.contains("cat_engage_percentile"))
                 .and_then(|key| row.get(key))
@@ -695,8 +734,8 @@ fn calculate_emotion_engagement_emas(combined: &mut Vec<HashMap<String, f64>>) {
         })
         .collect();
     
-    let ema_1s = calculate_ema_raw(&cat_values, 1.0);
-    let ema_10s = calculate_ema_raw(&cat_values, 10.0);
+    let ema_1s = calculate_time_aware_ema_raw(&cat_values, &time_values, 1.0);
+    let ema_10s = calculate_time_aware_ema_raw(&cat_values, &time_values, 10.0);
     
     for (i, row) in combined.iter_mut().enumerate() {
         row.insert("emotion_engage_1s_pct".to_string(), ema_1s[i]);
@@ -704,8 +743,8 @@ fn calculate_emotion_engagement_emas(combined: &mut Vec<HashMap<String, f64>>) {
     }
 }
 
-// Calculate EMA percentiles (for attention columns and total_engag_raw)
-fn calculate_ema_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
+// Fixed EMA calculation with proper percentile conversion and time awareness
+fn calculate_ema_with_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
     let alpha = 2.0 / (window_seconds + 1.0);
     let mut ema_values = vec![0.0; values.len()];
     
@@ -716,8 +755,19 @@ fn calculate_ema_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
         }
     }
     
-    // Use the new percentile conversion function for proper 0.0-100.0 scaling
+    // Convert EMA values to percentiles (0-100 scale)
     convert_to_percentiles(&ema_values)
+}
+
+// Time-aware EMA calculation with percentile conversion
+fn calculate_time_aware_ema_with_percentiles(values: &[f64], times: &[f64], tau_seconds: f64) -> Vec<f64> {
+    let ema_values = time_weighted_ema(values, times, tau_seconds);
+    convert_to_percentiles(&ema_values)
+}
+
+// Time-aware EMA calculation (raw values)
+fn calculate_time_aware_ema_raw(values: &[f64], times: &[f64], tau_seconds: f64) -> Vec<f64> {
+    time_weighted_ema(values, times, tau_seconds)
 }
 
 // Calculate raw EMA (for emotion engagement)
@@ -735,21 +785,7 @@ fn calculate_ema_raw(values: &[f64], window_seconds: f64) -> Vec<f64> {
     ema_values
 }
 
-fn time_weighted_ema(values: &[f64], times: &[f64], tau: f64) -> Vec<f64> {
-    let mut ema = vec![0.0; values.len()];
-    if values.is_empty() || times.is_empty() || values.len() != times.len() {
-        return ema;
-    }
-    
-    ema[0] = values[0]; // start EMA at first value
-    for i in 1..values.len() {
-        let dt = times[i] - times[i - 1];
-        let alpha = 1.0 - (-dt / tau).exp(); // continuous-time EMA
-        ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1];
-    }
-    ema
-}
-
+// Convert values to proper percentiles (0-100 range)
 fn convert_to_percentiles(values: &[f64]) -> Vec<f64> {
     if values.is_empty() {
         return Vec::new();
@@ -770,6 +806,7 @@ fn convert_to_percentiles(values: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+// Debug function to show available columns
 fn debug_available_columns(combined: &[HashMap<String, f64>]) {
     if let Some(first_row) = combined.first() {
         let mut columns: Vec<String> = first_row.keys().cloned().collect();
@@ -796,6 +833,7 @@ fn debug_available_columns(combined: &[HashMap<String, f64>]) {
     }
 }
 
+// Scale 0-1 range values to 0-100 range
 fn scale_0_1_to_0_100(combined: &mut Vec<HashMap<String, f64>>) {
     if combined.is_empty() {
         return;
