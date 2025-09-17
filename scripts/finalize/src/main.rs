@@ -1,7 +1,9 @@
 use csv::WriterBuilder;
+use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::error::Error;
+use std::sync::{Arc, Mutex};
 
 // Add ordered float for precise floating point comparisons
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -19,16 +21,18 @@ struct CsvRow {
     data: HashMap<String, Option<f64>>,
 }
 
-// Weighted contributions
-const WEIGHTS: &[(&str, f64)] = &[
-    ("cat", 0.22),
+// Weighted contributions for total_engag_raw
+const WEIGHTS_RAW: &[(&str, f64)] = &[
+    ("emotion_engage", 0.22),
     ("transc", 0.18),
-    ("vocal_rms", 0.13),
-    ("vocal_spectral", 0.10),
-    ("nonvocal_spectral", 0.03),
-    ("nonvocal_rms", 0.05),
+    ("rms_energy_vocal", 0.13),
+    ("spectral_vocal", 0.10),
+    ("spectral_nonvocal", 0.03),
+    ("rms_energy_nonvocal", 0.05),
     ("video", 0.25),
 ];
+
+// Legacy weights removed - no longer using totalengagement calculation
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -69,9 +73,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         &video_features,
     );
 
+    // Apply finalization (interpolation to 30 fps)
+    let finalized = finalize_data(combined);
+
     // Collect all column names
     let mut all_columns_set = BTreeSet::new();
-    for row in &combined {
+    for row in &finalized {
         for k in row.keys() {
             all_columns_set.insert(k.clone());
         }
@@ -82,7 +89,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut wtr = WriterBuilder::new().from_path("total_engagement.csv")?;
     wtr.write_record(&all_columns)?; // headers
 
-    for row in combined {
+    for row in finalized {
         let record: Vec<String> = all_columns
             .iter()
             .map(|col| row.get(col).unwrap_or(&0.0).to_string())
@@ -137,12 +144,19 @@ fn process_vocal_features(rows: &[CsvRow]) -> HashMap<String, Vec<f64>> {
 
 // Extract multi-channel non-vocal features
 fn process_nonvocal_features(rows: &[CsvRow]) -> HashMap<String, Vec<f64>> {
-    extract_features(rows, &[
+    let mut raw = extract_features(rows, &[
         "rms_energy_engage_ema_1s_pct",
         "rms_energy_engage_ema_10s_pct",
         "spectral_engage_ema_1s_pct",
         "spectral_engage_ema_10s_pct",
-    ])
+    ]);
+
+    // Add "nonvocal_" prefix to each feature
+    let mut renamed = HashMap::new();
+    for (k, v) in raw.drain() {
+        renamed.insert(format!("nonvocal_{}", k), v);
+    }
+    renamed
 }
 
 // Extract video features, keeping attention and visual_engage columns
@@ -207,14 +221,109 @@ fn interpolate_nans(vals: &[f64]) -> Vec<f64> {
     out
 }
 
+// Helper function to get channel-averaged value for a specific pattern
+fn get_channel_averaged_value(row: &HashMap<String, f64>, pattern: &str, suffix: &str) -> f64 {
+    let chan1_key = format!("chan1_{}{}", pattern, suffix);
+    let chan2_key = format!("chan2_{}{}", pattern, suffix);
+    
+    let chan1_val = row.get(&chan1_key).copied().unwrap_or(0.0);
+    let chan2_val = row.get(&chan2_key).copied().unwrap_or(0.0);
+    
+    // If one channel has 0, use the other
+    if chan1_val == 0.0 && chan2_val != 0.0 {
+        chan2_val
+    } else if chan2_val == 0.0 && chan1_val != 0.0 {
+        chan1_val
+    } else if chan1_val != 0.0 && chan2_val != 0.0 {
+        // Average both channels
+        (chan1_val + chan2_val) / 2.0
+    } else {
+        0.0
+    }
+}
+
+// Calculate total_engag_raw using weighted 1s percentiles (parallelized)
+fn calculate_total_engag_raw(combined: &mut Vec<HashMap<String, f64>>) {
+    combined.par_iter_mut().for_each(|row| {
+        let mut weighted_sum = 0.0;
+        
+        // Emotion engage (22%) - using emotion_engage_1s_pct
+        if let Some(val) = row.get("emotion_engage_1s_pct") {
+            weighted_sum += val * WEIGHTS_RAW[0].1; // 0.22
+        }
+        
+        // Transcription engage (18%) - need to find transc columns with 1s
+        let transc_val = row.keys()
+            .filter(|k| k.contains("transc") && k.contains("1s"))
+            .filter_map(|k| row.get(k))
+            .next()
+            .copied()
+            .unwrap_or(0.0);
+        weighted_sum += transc_val * WEIGHTS_RAW[1].1; // 0.18
+        
+        // RMS Energy Vocal (13%) - average chan1 and chan2 rms_energy 1s pct
+        let rms_vocal = get_channel_averaged_value(row, "rms_energy_engage_ema_", "1s_pct");
+        weighted_sum += rms_vocal * WEIGHTS_RAW[2].1; // 0.13
+        
+        // Spectral Vocal (10%) - average chan1 and chan2 spectral 1s pct
+        let spectral_vocal = get_channel_averaged_value(row, "spectral_engage_ema_", "1s_pct");
+        weighted_sum += spectral_vocal * WEIGHTS_RAW[3].1; // 0.10
+        
+        // Spectral Nonvocal (3%) - need nonvocal spectral 1s pct
+        let spectral_nonvocal = row.keys()
+            .filter(|k| k.contains("nonvocal") && k.contains("spectral") && k.contains("1s_pct"))
+            .filter_map(|k| row.get(k))
+            .next()
+            .copied()
+            .unwrap_or(0.0);
+        weighted_sum += spectral_nonvocal * WEIGHTS_RAW[4].1; // 0.03
+        
+        // RMS Energy Nonvocal (5%) - need nonvocal rms 1s pct
+        let rms_nonvocal = row.keys()
+            .filter(|k| k.contains("nonvocal") && k.contains("rms_energy") && k.contains("1s_pct"))
+            .filter_map(|k| row.get(k))
+            .next()
+            .copied()
+            .unwrap_or(0.0);
+        weighted_sum += rms_nonvocal * WEIGHTS_RAW[5].1; // 0.05
+        
+        // Video (25%) - using visual_engage_ema_1s_pct
+        if let Some(val) = row.get("visual_engage_ema_1s_pct") {
+            weighted_sum += val * WEIGHTS_RAW[6].1; // 0.25
+        }
+        
+        row.insert("total_engag_raw".to_string(), weighted_sum);
+    });
+}
+
+// Calculate EMAs for total_engag_raw (1s, 5s, 10s, 30s percentiles)
+fn calculate_total_engag_raw_emas(combined: &mut Vec<HashMap<String, f64>>) {
+    let raw_values: Vec<f64> = combined
+        .iter()
+        .map(|row| row.get("total_engag_raw").copied().unwrap_or(0.0))
+        .collect();
+    
+    let ema_1s_pct = calculate_ema_percentiles(&raw_values, 1.0);
+    let ema_5s_pct = calculate_ema_percentiles(&raw_values, 5.0);
+    let ema_10s_pct = calculate_ema_percentiles(&raw_values, 10.0);
+    let ema_30s_pct = calculate_ema_percentiles(&raw_values, 30.0);
+    
+    for (i, row) in combined.iter_mut().enumerate() {
+        row.insert("total_engag_raw_ema_1s_pct".to_string(), ema_1s_pct[i]);
+        row.insert("total_engag_raw_ema_5s_pct".to_string(), ema_5s_pct[i]);
+        row.insert("total_engag_raw_ema_10s_pct".to_string(), ema_10s_pct[i]);
+        row.insert("total_engag_raw_ema_30s_pct".to_string(), ema_30s_pct[i]);
+    }
+}
+
 // Combine features but only include engage EMA pct columns and attention data
 fn combine_features_filtered(
     vocals_rows: &[CsvRow],
-    vocal_features: &HashMap<String, Vec<f64>>,
+    _vocal_features: &HashMap<String, Vec<f64>>,  // No longer used
     nonvocals_rows: &[CsvRow],
-    nonvocal_features: &HashMap<String, Vec<f64>>,
+    _nonvocal_features: &HashMap<String, Vec<f64>>,  // No longer used
     video_rows: &[CsvRow],
-    video_features: &HashMap<String, Vec<f64>>,
+    _video_features: &HashMap<String, Vec<f64>>,  // No longer used
 ) -> Vec<HashMap<String, f64>> {
     // Create time-indexed maps for each dataset
     let vocals_by_time = create_time_index(vocals_rows);
@@ -251,7 +360,7 @@ fn combine_features_filtered(
             for (k, v) in &nonvocal_row.data {
                 if let Some(val) = *v {
                     if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
-                        row.insert(k.clone(), val);
+                        row.insert(format!("nonvocal_{}", k), val);
                     }
                 }
             }
@@ -268,46 +377,18 @@ fn combine_features_filtered(
             }
         }
 
-        // Calculate weighted engagement scores
-        let vocal_sum: f64 = WEIGHTS
-            .iter()
-            .filter(|(k, _)| ["cat", "transc", "vocal_rms", "vocal_spectral"].contains(k))
-            .map(|(k, w)| {
-                get_feature_value_at_time(time_sec.0, k, vocal_features, &vocals_by_time) * w
-            })
-            .sum();
-
-        let nonvocal_sum: f64 = WEIGHTS
-            .iter()
-            .filter(|(k, _)| ["nonvocal_rms", "nonvocal_spectral"].contains(k))
-            .map(|(k, w)| {
-                get_feature_value_at_time(time_sec.0, k, nonvocal_features, &nonvocals_by_time) * w
-            })
-            .sum();
-
-        let video_sum: f64 = WEIGHTS
-            .iter()
-            .filter(|(k, _)| *k == "video")
-            .map(|(_, w)| {
-                get_video_feature_value_at_time(time_sec.0, video_features, &video_by_time) * w
-            })
-            .sum();
-
-        let total = vocal_sum + nonvocal_sum + video_sum;
-        row.insert("totalengagement".to_string(), total);
-
-        // Calculate EMA percentiles based on available data at this timestamp
-        let ema_1s = calculate_ema_at_time(time_sec.0, "_ema_1s_pct", &vocals_by_time, &nonvocals_by_time, &video_by_time);
-        let ema_10s = calculate_ema_at_time(time_sec.0, "_ema_10s_pct", &vocals_by_time, &nonvocals_by_time, &video_by_time);
-        
-        row.insert("totalengagement_ema_1s_pct".to_string(), ema_1s);
-        row.insert("totalengagement_ema_10s_pct".to_string(), ema_10s);
+        // Calculate weighted engagement scores (legacy totalengagement) - REMOVED
+        // No longer calculating totalengagement, totalengagement_ema_1s_pct, totalengagement_ema_10s_pct
 
         combined.push(row);
     }
 
     // After processing all timestamps, apply linear interpolation and calculate EMAs
     apply_linear_interpolation_and_emas(&mut combined);
+    
+    // Calculate total_engag_raw and its EMAs
+    calculate_total_engag_raw(&mut combined);
+    calculate_total_engag_raw_emas(&mut combined);
 
     combined
 }
@@ -326,93 +407,126 @@ fn create_time_index(rows: &[CsvRow]) -> std::collections::BTreeMap<OrderedFloat
     time_index
 }
 
-// Get feature value at specific time
-fn get_feature_value_at_time(
-    time_sec: f64,
-    feature_key: &str,
-    features: &HashMap<String, Vec<f64>>,
-    time_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>
-) -> f64 {
-    // Find the matching feature key
-    if let Some(feature_name) = features.keys().find(|x| x.contains(feature_key)) {
-        if let Some(feature_vec) = features.get(feature_name) {
-            // Find the index of this timestamp in the original data
-            if let Some(row_index) = time_index.keys().position(|t| t.0 == time_sec) {
-                return feature_vec.get(row_index).copied().unwrap_or(0.0);
+// Finalize data by interpolating to 30 rows per second (30 fps) with parallelization
+fn finalize_data(mut data: Vec<HashMap<String, f64>>) -> Vec<HashMap<String, f64>> {
+    if data.is_empty() {
+        return data;
+    }
+    
+    // Sort by time_sec to ensure proper ordering
+    data.sort_by(|a, b| {
+        let time_a = a.get("time_sec").copied().unwrap_or(0.0);
+        let time_b = b.get("time_sec").copied().unwrap_or(0.0);
+        time_a.partial_cmp(&time_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    let first_time = data.first().unwrap().get("time_sec").copied().unwrap_or(0.0);
+    let last_time = data.last().unwrap().get("time_sec").copied().unwrap_or(0.0);
+    
+    // Create 30fps timeline (1/30 second intervals)
+    let fps = 30.0;
+    let time_step = 1.0 / fps;
+    let mut target_times = Vec::new();
+    
+    let mut current_time = first_time;
+    while current_time <= last_time {
+        target_times.push(current_time);
+        current_time += time_step;
+    }
+    
+    // Get all column names except time_sec
+    let mut all_columns = std::collections::HashSet::new();
+    for row in &data {
+        for key in row.keys() {
+            if key != "time_sec" {
+                all_columns.insert(key.clone());
             }
         }
     }
-    0.0
-}
-
-// Get video feature value at specific time
-fn get_video_feature_value_at_time(
-    time_sec: f64,
-    features: &HashMap<String, Vec<f64>>,
-    time_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>
-) -> f64 {
-    if let Some(row_index) = time_index.keys().position(|t| t.0 == time_sec) {
-        let sum: f64 = features.values()
-            .map(|vec| vec.get(row_index).copied().unwrap_or(0.0))
-            .sum();
-        sum
-    } else {
-        0.0
-    }
-}
-
-// Calculate EMA at specific time
-fn calculate_ema_at_time(
-    time_sec: f64,
-    ema_suffix: &str,
-    vocals_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>,
-    nonvocals_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>,
-    video_index: &std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow>
-) -> f64 {
-    let mut sum = 0.0;
-    let mut count = 0;
-    let time_key = OrderedFloat(time_sec);
-
-    // Check vocals
-    if let Some(row) = vocals_index.get(&time_key) {
-        for (k, v) in &row.data {
-            if k.contains("engage") && k.ends_with(ema_suffix) {
-                if let Some(val) = *v {
-                    sum += val;
-                    count += 1;
+    let columns: Vec<String> = all_columns.into_iter().collect();
+    
+    // Extract original time series once for efficiency
+    let original_times: Vec<f64> = data.iter()
+        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
+        .collect();
+    
+    // Pre-compute column data for parallel access
+    let column_data: HashMap<String, Vec<f64>> = columns.par_iter()
+        .map(|column| {
+            let values: Vec<f64> = data.iter()
+                .map(|row| row.get(column).copied().unwrap_or(0.0))
+                .collect();
+            (column.clone(), values)
+        })
+        .collect();
+    
+    // Build interpolated data in parallel
+    let interpolated_data: Vec<HashMap<String, f64>> = target_times.par_iter()
+        .map(|&target_time| {
+            let mut new_row = HashMap::new();
+            new_row.insert("time_sec".to_string(), target_time);
+            
+            // Interpolate each column
+            for column in &columns {
+                if let Some(values) = column_data.get(column) {
+                    let interpolated_value = interpolate_at_time(&original_times, values, target_time);
+                    new_row.insert(column.clone(), interpolated_value);
                 }
             }
-        }
-    }
-
-    // Check nonvocals
-    if let Some(row) = nonvocals_index.get(&time_key) {
-        for (k, v) in &row.data {
-            if k.contains("engage") && k.ends_with(ema_suffix) {
-                if let Some(val) = *v {
-                    sum += val;
-                    count += 1;
-                }
-            }
-        }
-    }
-
-    // Check video
-    if let Some(row) = video_index.get(&time_key) {
-        for (k, v) in &row.data {
-            if k.contains("engage") && k.ends_with(ema_suffix) {
-                if let Some(val) = *v {
-                    sum += val;
-                    count += 1;
-                }
-            }
-        }
-    }
-
-    if count > 0 { sum / count as f64 } else { 0.0 }
+            
+            new_row
+        })
+        .collect();
+    
+    interpolated_data
 }
 
-// Apply linear interpolation to all columns and calculate EMAs
+// Efficiently interpolate a single value at a specific time using linear interpolation
+fn interpolate_at_time(times: &[f64], values: &[f64], target_time: f64) -> f64 {
+    if times.is_empty() || values.is_empty() || times.len() != values.len() {
+        return 0.0;
+    }
+    
+    // Handle edge cases
+    if target_time <= times[0] {
+        return values[0];
+    }
+    if target_time >= times[times.len() - 1] {
+        return values[values.len() - 1];
+    }
+    
+    // Binary search for the correct interval (more efficient than linear search)
+    let mut left = 0;
+    let mut right = times.len() - 1;
+    
+    while left < right - 1 {
+        let mid = (left + right) / 2;
+        if times[mid] <= target_time {
+            left = mid;
+        } else {
+            right = mid;
+        }
+    }
+    
+    // Linear interpolation between times[left] and times[right]
+    let t0 = times[left];
+    let t1 = times[right];
+    let v0 = values[left];
+    let v1 = values[right];
+    
+    if (t1 - t0).abs() < f64::EPSILON {
+        // Avoid division by zero
+        return v0;
+    }
+    
+    let ratio = (target_time - t0) / (t1 - t0);
+    v0 + ratio * (v1 - v0)
+}
+
+// Functions get_feature_value_at_time, get_video_feature_value_at_time, and calculate_ema_at_time 
+// have been removed as they were only used for the old totalengagement calculation
+
+// Apply linear interpolation to all columns and calculate EMAs (parallelized)
 fn apply_linear_interpolation_and_emas(combined: &mut Vec<HashMap<String, f64>>) {
     if combined.is_empty() {
         return;
@@ -428,23 +542,37 @@ fn apply_linear_interpolation_and_emas(combined: &mut Vec<HashMap<String, f64>>)
         }
     }
     
-    // Apply linear interpolation to each column
-    for column_name in &all_columns {
-        let mut values: Vec<Option<f64>> = combined
-            .iter()
-            .map(|row| row.get(column_name).copied())
-            .collect();
+    // Convert to vector for parallel processing
+    let columns: Vec<String> = all_columns.into_iter().collect();
+    
+    // Apply linear interpolation to each column in parallel
+    let combined_arc = Arc::new(Mutex::new(combined));
+    
+    columns.par_iter().for_each(|column_name| {
+        // Extract values for this column
+        let values: Vec<Option<f64>> = {
+            let combined_guard = combined_arc.lock().unwrap();
+            combined_guard
+                .iter()
+                .map(|row| row.get(column_name).copied())
+                .collect()
+        };
         
         // Apply linear interpolation
-        interpolate_column_values(&mut values);
+        let mut interpolated_values = values;
+        interpolate_column_values(&mut interpolated_values);
         
         // Update the combined data with interpolated values
-        for (i, interpolated_value) in values.iter().enumerate() {
+        let mut combined_guard = combined_arc.lock().unwrap();
+        for (i, interpolated_value) in interpolated_values.iter().enumerate() {
             if let Some(val) = interpolated_value {
-                combined[i].insert(column_name.clone(), *val);
+                combined_guard[i].insert(column_name.clone(), *val);
             }
         }
-    }
+    });
+    
+    // Drop the Arc wrapper to get back our mutable reference
+    let combined = Arc::try_unwrap(combined_arc).unwrap().into_inner().unwrap();
     
     // Calculate EMAs for attention columns
     calculate_attention_emas(combined);
@@ -560,7 +688,7 @@ fn calculate_emotion_engagement_emas(combined: &mut Vec<HashMap<String, f64>>) {
     }
 }
 
-// Calculate EMA percentiles (for attention columns)
+// Calculate EMA percentiles (for attention columns and total_engag_raw)
 fn calculate_ema_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
     let alpha = 2.0 / (window_seconds + 1.0);
     let mut ema_values = vec![0.0; values.len()];
@@ -594,4 +722,19 @@ fn calculate_ema_raw(values: &[f64], window_seconds: f64) -> Vec<f64> {
     }
     
     ema_values
+}
+
+fn time_weighted_ema(values: &[f64], times: &[f64], tau: f64) -> Vec<f64> {
+    let mut ema = vec![0.0; values.len()];
+    if values.is_empty() || times.is_empty() || values.len() != times.len() {
+        return ema;
+    }
+    
+    ema[0] = values[0]; // start EMA at first value
+    for i in 1..values.len() {
+        let dt = times[i] - times[i - 1];
+        let alpha = 1.0 - (-dt / tau).exp(); // continuous-time EMA
+        ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1];
+    }
+    ema
 }
