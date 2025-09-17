@@ -231,9 +231,9 @@ fn main() -> Result<()> {
     let full_width = width + right_bar_width;
     let full_height = height + bottom_bar_height; // No top bar anymore
 
-    // Scale video for top-left display
-    let scaled_video_width = width / 2;
-    let scaled_video_height = height / 2;
+    // Scale video to fill more of the available space
+    let scaled_video_width = width;
+    let scaled_video_height = height;
 
     let fourcc = videoio::VideoWriter::fourcc('a','v','c','1')?;
     let mut writer = videoio::VideoWriter::new(
@@ -244,11 +244,11 @@ fn main() -> Result<()> {
         true
     )?;
 
-    // Attention smoothing and trail - using the higher data rate (30fps)
+    // Attention smoothing and trail - adjusted for full-size video
     let mut last_x = scaled_video_width / 2;
-    let mut last_y = scaled_video_height / 2; // No top bar offset
-    let movement_amplifier = 15.0; // Reduced since we have more data points
-    let trail_length = 20; // Increased for smoother trails
+    let mut last_y = scaled_video_height / 2;
+    let movement_amplifier = 30.0; // Increased since video is now larger
+    let trail_length = 20;
     let mut trail: Vec<(i32, i32)> = Vec::new();
 
     // Dynamic center calculation for 5-second windows
@@ -291,7 +291,7 @@ fn main() -> Result<()> {
         // Create canvas
         let mut canvas = Mat::zeros(full_height, full_width, frame.typ())?.to_mat()?;
 
-        // --- Resize original frame to top-left (no top bar offset needed) ---
+        // --- Resize original frame to fill left side (no scaling down) ---
         let mut resized_frame = Mat::default();
         imgproc::resize(
             &frame,
@@ -302,7 +302,7 @@ fn main() -> Result<()> {
             imgproc::INTER_LINEAR
         )?;
 
-        // Copy resized frame to canvas (positioned at top-left)
+        // Copy resized frame to canvas (positioned at left side, full height)
         let roi = core::Rect::new(0, 0, scaled_video_width, scaled_video_height);
         let mut roi_mat = core::Mat::roi_mut(&mut canvas, roi)?;
         resized_frame.copy_to(&mut roi_mat)?;
@@ -310,7 +310,7 @@ fn main() -> Result<()> {
         // --- Draw overlay elements ---
         // Removed draw_top_bar call
         draw_bottom_engagement_bars(&mut canvas, &data, full_width, bottom_bar_height, full_height)?;
-        draw_right_vertical_bars(&mut canvas, &data, width, 0, scaled_video_height, right_bar_width)?; // No top bar offset
+        draw_right_vertical_bars(&mut canvas, &data, width, 0, scaled_video_height, right_bar_width)?;
 
         // --- Calculate attention point coordinates with dynamic centering ---
         let center_x = scaled_video_width / 2;
@@ -323,38 +323,38 @@ fn main() -> Result<()> {
         let mut y = (center_y as f64 + attention_y_offset * scaled_video_height as f64) as i32;
         
         x = x.clamp(0, scaled_video_width-1);
-        y = y.clamp(0, scaled_video_height-1); // No top bar offset
+        y = y.clamp(0, scaled_video_height-1);
 
         // Smooth movement (less smoothing due to higher data rate)
         x = ((0.2 * last_x as f64 + 0.8 * x as f64) as i32).clamp(0, scaled_video_width-1);
-        y = ((0.2 * last_y as f64 + 0.8 * y as f64) as i32).clamp(0, scaled_video_height-1); // No top bar offset
+        y = ((0.2 * last_y as f64 + 0.8 * y as f64) as i32).clamp(0, scaled_video_height-1);
         last_x = x;
         last_y = y;
 
-        // --- Draw attention trail ---
+        // --- Draw attention trail with larger radius for bigger video ---
         trail.push((x, y));
         if trail.len() > trail_length { trail.remove(0); }
         for (i, &(tx, ty)) in trail.iter().enumerate() {
             let alpha = i as f64 / trail.len() as f64;
-            let radius = (3.0 + alpha * 8.0) as i32;
+            let radius = (5.0 + alpha * 12.0) as i32; // Larger trail points
             imgproc::circle(
                 &mut canvas,
                 core::Point::new(tx, ty),
                 radius,
                 core::Scalar::new(255.0 * alpha, 100.0 * alpha, 0.0, 0.0),
-                1,
+                2, // Thicker trail lines
                 imgproc::LINE_8,
                 0
             )?;
         }
 
-        // --- Draw yellow hollow outer ring ---
+        // --- Draw larger yellow hollow outer ring ---
         imgproc::circle(
             &mut canvas,
             core::Point::new(x, y),
-            25,
+            40, // Larger circle for bigger video
             core::Scalar::new(0.0, 255.0, 255.0, 0.0),
-            2,
+            3, // Thicker line
             imgproc::LINE_8,
             0
         )?;
