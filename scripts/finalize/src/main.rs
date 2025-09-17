@@ -239,7 +239,7 @@ fn combine_features_filtered(
         if let Some(vocal_row) = vocals_by_time.get(&time_sec) {
             for (k, v) in &vocal_row.data {
                 if let Some(val) = *v {
-                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") {
+                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
                         row.insert(k.clone(), val);
                     }
                 }
@@ -250,7 +250,7 @@ fn combine_features_filtered(
         if let Some(nonvocal_row) = nonvocals_by_time.get(&time_sec) {
             for (k, v) in &nonvocal_row.data {
                 if let Some(val) = *v {
-                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") {
+                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
                         row.insert(k.clone(), val);
                     }
                 }
@@ -261,7 +261,7 @@ fn combine_features_filtered(
         if let Some(video_row) = video_by_time.get(&time_sec) {
             for (k, v) in &video_row.data {
                 if let Some(val) = *v {
-                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") {
+                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
                         row.insert(k.clone(), val);
                     }
                 }
@@ -305,6 +305,9 @@ fn combine_features_filtered(
 
         combined.push(row);
     }
+
+    // After processing all timestamps, apply linear interpolation and calculate EMAs
+    apply_linear_interpolation_and_emas(&mut combined);
 
     combined
 }
@@ -407,4 +410,188 @@ fn calculate_ema_at_time(
     }
 
     if count > 0 { sum / count as f64 } else { 0.0 }
+}
+
+// Apply linear interpolation to all columns and calculate EMAs
+fn apply_linear_interpolation_and_emas(combined: &mut Vec<HashMap<String, f64>>) {
+    if combined.is_empty() {
+        return;
+    }
+    
+    // Collect all column names except time_sec
+    let mut all_columns = std::collections::HashSet::new();
+    for row in combined.iter() {
+        for key in row.keys() {
+            if key != "time_sec" {
+                all_columns.insert(key.clone());
+            }
+        }
+    }
+    
+    // Apply linear interpolation to each column
+    for column_name in &all_columns {
+        let mut values: Vec<Option<f64>> = combined
+            .iter()
+            .map(|row| row.get(column_name).copied())
+            .collect();
+        
+        // Apply linear interpolation
+        interpolate_column_values(&mut values);
+        
+        // Update the combined data with interpolated values
+        for (i, interpolated_value) in values.iter().enumerate() {
+            if let Some(val) = interpolated_value {
+                combined[i].insert(column_name.clone(), *val);
+            }
+        }
+    }
+    
+    // Calculate EMAs for attention columns
+    calculate_attention_emas(combined);
+    
+    // Calculate emotion engagement EMAs from cat_engage_percentile
+    calculate_emotion_engagement_emas(combined);
+}
+
+// Linear interpolation for a single column
+fn interpolate_column_values(values: &mut Vec<Option<f64>>) {
+    let n = values.len();
+    
+    // Forward fill from first non-None value
+    let mut first_valid = None;
+    for i in 0..n {
+        if values[i].is_some() {
+            first_valid = Some(i);
+            break;
+        }
+    }
+    
+    if let Some(first_idx) = first_valid {
+        // Fill everything before first valid value
+        let first_val = values[first_idx].unwrap();
+        for i in 0..first_idx {
+            values[i] = Some(first_val);
+        }
+    }
+    
+    // Backward fill from last non-None value
+    let mut last_valid = None;
+    for i in (0..n).rev() {
+        if values[i].is_some() {
+            last_valid = Some(i);
+            break;
+        }
+    }
+    
+    if let Some(last_idx) = last_valid {
+        let last_val = values[last_idx].unwrap();
+        for i in (last_idx + 1)..n {
+            values[i] = Some(last_val);
+        }
+    }
+    
+    // Linear interpolation for gaps in the middle
+    for i in 0..n {
+        if values[i].is_none() {
+            // Find previous and next valid values
+            let prev = (0..i).rev().find(|&j| values[j].is_some());
+            let next = (i + 1..n).find(|&j| values[j].is_some());
+            
+            if let (Some(p), Some(nxt)) = (prev, next) {
+                let prev_val = values[p].unwrap();
+                let next_val = values[nxt].unwrap();
+                let ratio = (i - p) as f64 / (nxt - p) as f64;
+                values[i] = Some(prev_val + (next_val - prev_val) * ratio);
+            }
+        }
+    }
+}
+
+// Calculate EMA percentiles for attention columns
+fn calculate_attention_emas(combined: &mut Vec<HashMap<String, f64>>) {
+    // Find all attention column names
+    let attention_columns: Vec<String> = combined
+        .iter()
+        .flat_map(|row| row.keys().cloned())
+        .filter(|key| key.contains("attention"))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    
+    for attention_col in attention_columns {
+        let values: Vec<f64> = combined
+            .iter()
+            .map(|row| row.get(&attention_col).copied().unwrap_or(0.0))
+            .collect();
+        
+        let ema_1s_pct = calculate_ema_percentiles(&values, 1.0);
+        let ema_10s_pct = calculate_ema_percentiles(&values, 10.0);
+        
+        let col_1s = format!("{}_ema_1s_pct", attention_col);
+        let col_10s = format!("{}_ema_10s_pct", attention_col);
+        
+        for (i, row) in combined.iter_mut().enumerate() {
+            row.insert(col_1s.clone(), ema_1s_pct[i]);
+            row.insert(col_10s.clone(), ema_10s_pct[i]);
+        }
+    }
+}
+
+// Calculate emotion engagement EMAs from cat_engage_percentile
+fn calculate_emotion_engagement_emas(combined: &mut Vec<HashMap<String, f64>>) {
+    // Find cat_engage_percentile values
+    let cat_values: Vec<f64> = combined
+        .iter()
+        .map(|row| {
+            row.keys()
+                .find(|key| key.contains("cat_engage_percentile"))
+                .and_then(|key| row.get(key))
+                .copied()
+                .unwrap_or(0.0)
+        })
+        .collect();
+    
+    let ema_1s = calculate_ema_raw(&cat_values, 1.0);
+    let ema_10s = calculate_ema_raw(&cat_values, 10.0);
+    
+    for (i, row) in combined.iter_mut().enumerate() {
+        row.insert("emotion_engage_1s_pct".to_string(), ema_1s[i]);
+        row.insert("emotion_engage_10s_pct".to_string(), ema_10s[i]);
+    }
+}
+
+// Calculate EMA percentiles (for attention columns)
+fn calculate_ema_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
+    let alpha = 2.0 / (window_seconds + 1.0);
+    let mut ema_values = vec![0.0; values.len()];
+    
+    if !values.is_empty() {
+        ema_values[0] = values[0];
+        for i in 1..values.len() {
+            ema_values[i] = alpha * values[i] + (1.0 - alpha) * ema_values[i - 1];
+        }
+    }
+    
+    // Convert to percentiles (relative to max value)
+    let max_val = ema_values.iter().cloned().fold(0.0, f64::max);
+    if max_val > 0.0 {
+        ema_values.iter().map(|&v| (v / max_val) * 100.0).collect()
+    } else {
+        ema_values
+    }
+}
+
+// Calculate raw EMA (for emotion engagement)
+fn calculate_ema_raw(values: &[f64], window_seconds: f64) -> Vec<f64> {
+    let alpha = 2.0 / (window_seconds + 1.0);
+    let mut ema_values = vec![0.0; values.len()];
+    
+    if !values.is_empty() {
+        ema_values[0] = values[0];
+        for i in 1..values.len() {
+            ema_values[i] = alpha * values[i] + (1.0 - alpha) * ema_values[i - 1];
+        }
+    }
+    
+    ema_values
 }
