@@ -7,8 +7,9 @@ use opencv::{
 use csv::ReaderBuilder;
 use serde::Deserialize;
 use anyhow::Result;
+use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Default)]
 struct FrameData {
     time_sec: f64,
     cat_engage_ema_1s_pct: f64,
@@ -55,6 +56,124 @@ struct FrameData {
     total_engagement_pct: f64,
 }
 
+fn safe_parse_f64(s: &str) -> f64 {
+    s.trim().parse::<f64>().unwrap_or(0.0)
+}
+
+fn load_csv_data(csv_path: &str) -> Result<Vec<FrameData>> {
+    let mut frame_data: Vec<FrameData> = Vec::new();
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_path(csv_path)?;
+
+    // Get headers to understand the CSV structure
+    let headers = rdr.headers()?.clone();
+    println!("CSV Headers found:");
+    for (i, header) in headers.iter().enumerate() {
+        println!("  {}: {}", i, header);
+    }
+
+    // Process each record manually
+    for (row_num, result) in rdr.records().enumerate() {
+        match result {
+            Ok(record) => {
+                let mut data = FrameData::default();
+                
+                // Map columns by name, handling variations
+                for (i, header) in headers.iter().enumerate() {
+                    if let Some(value) = record.get(i) {
+                        let val = safe_parse_f64(value);
+                        
+                        match header {
+                            // Time
+                            "time_sec" => data.time_sec = val,
+                            
+                            // Cat engagement - look for variations
+                            h if h.contains("cat") && h.contains("engage_ema_1s_pct") => data.cat_engage_ema_1s_pct = val,
+                            h if h.contains("cat") && h.contains("engage_ema_5s_pct") => data.cat_engage_ema_5s_pct = val,
+                            h if h.contains("cat") && h.contains("engage_ema_10s_pct") => data.cat_engage_ema_10s_pct = val,
+                            
+                            // Transcription engagement
+                            h if h.contains("transc") && h.contains("engage_ema_1s_pct") => data.transc_engage_ema_1s_pct = val,
+                            h if h.contains("transc") && h.contains("engage_ema_5s_pct") => data.transc_engage_ema_5s_pct = val,
+                            h if h.contains("transc") && h.contains("engage_ema_10s_pct") => data.transc_engage_ema_10s_pct = val,
+                            
+                            // Vocals RMS Energy
+                            h if h.contains("vocals") && h.contains("rms_energy_ema_1s") && !h.contains("pct") => data.vocals_rms_energy_ema_1s = val,
+                            h if h.contains("vocals") && h.contains("rms_energy_ema_5s") && !h.contains("pct") => data.vocals_rms_energy_ema_5s = val,
+                            h if h.contains("vocals") && h.contains("rms_energy_ema_10s") && !h.contains("pct") => data.vocals_rms_energy_ema_10s = val,
+                            h if h.contains("vocals") && h.contains("rms_energy_ema_1s_pct") => data.vocals_rms_energy_ema_1s_pct = val,
+                            h if h.contains("vocals") && h.contains("rms_energy_ema_5s_pct") => data.vocals_rms_energy_ema_5s_pct = val,
+                            h if h.contains("vocals") && h.contains("rms_energy_ema_10s_pct") => data.vocals_rms_energy_ema_10s_pct = val,
+                            
+                            // Vocals Spectral
+                            h if h.contains("vocals") && h.contains("spectral_ema_1s") && !h.contains("pct") => data.vocals_spectral_ema_1s = val,
+                            h if h.contains("vocals") && h.contains("spectral_ema_5s") && !h.contains("pct") => data.vocals_spectral_ema_5s = val,
+                            h if h.contains("vocals") && h.contains("spectral_ema_10s") && !h.contains("pct") => data.vocals_spectral_ema_10s = val,
+                            h if h.contains("vocals") && h.contains("spectral_ema_1s_pct") => data.vocals_spectral_ema_1s_pct = val,
+                            h if h.contains("vocals") && h.contains("spectral_ema_5s_pct") => data.vocals_spectral_ema_5s_pct = val,
+                            h if h.contains("vocals") && h.contains("spectral_ema_10s_pct") => data.vocals_spectral_ema_10s_pct = val,
+                            
+                            // Nonvocals RMS Energy
+                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_1s") && !h.contains("pct") => data.nonvocals_rms_energy_ema_1s = val,
+                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_5s") && !h.contains("pct") => data.nonvocals_rms_energy_ema_5s = val,
+                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_10s") && !h.contains("pct") => data.nonvocals_rms_energy_ema_10s = val,
+                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_1s_pct") => data.nonvocals_rms_energy_ema_1s_pct = val,
+                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_5s_pct") => data.nonvocals_rms_energy_ema_5s_pct = val,
+                            h if h.contains("nonvocals") && h.contains("rms_energy_ema_10s_pct") => data.nonvocals_rms_energy_ema_10s_pct = val,
+                            
+                            // Nonvocals Spectral
+                            h if h.contains("nonvocals") && h.contains("spectral_ema_1s") && !h.contains("pct") => data.nonvocals_spectral_ema_1s = val,
+                            h if h.contains("nonvocals") && h.contains("spectral_ema_5s") && !h.contains("pct") => data.nonvocals_spectral_ema_5s = val,
+                            h if h.contains("nonvocals") && h.contains("spectral_ema_10s") && !h.contains("pct") => data.nonvocals_spectral_ema_10s = val,
+                            h if h.contains("nonvocals") && h.contains("spectral_ema_1s_pct") => data.nonvocals_spectral_ema_1s_pct = val,
+                            h if h.contains("nonvocals") && h.contains("spectral_ema_5s_pct") => data.nonvocals_spectral_ema_5s_pct = val,
+                            h if h.contains("nonvocals") && h.contains("spectral_ema_10s_pct") => data.nonvocals_spectral_ema_10s_pct = val,
+                            
+                            // Attention
+                            h if h.contains("attention_center_x") => data.attention_center_x = val,
+                            h if h.contains("attention_center_y") => data.attention_center_y = val,
+                            h if h.contains("attention_concentration") => data.attention_concentration = val,
+                            h if h.contains("attention_shift_rate") => data.attention_shift_rate = val,
+                            
+                            // Visual engagement
+                            h if h.contains("visual_engage_ema_1s_pct") => data.visual_engage_ema_1s_pct = val,
+                            h if h.contains("visual_engage_ema_3s_pct") => data.visual_engage_ema_3s_pct = val,
+                            h if h.contains("visual_engage_ema_10s_pct") => data.visual_engage_ema_10s_pct = val,
+                            h if h.contains("visual_engage_ema_1s") && !h.contains("pct") => data.visual_engage_ema_1s = val,
+                            h if h.contains("visual_engage_ema_3s") && !h.contains("pct") => data.visual_engage_ema_3s = val,
+                            h if h.contains("visual_engage_ema_10s") && !h.contains("pct") => data.visual_engage_ema_10s = val,
+                            
+                            // Total engagement
+                            h if h.contains("total_engagement_score") => data.total_engagement = val,
+                            h if h.contains("total_engagement_percentile") => data.total_engagement_pct = val,
+                            h if h.contains("total_engagement") && !h.contains("score") && !h.contains("percentile") => data.total_engagement = val,
+                            
+                            _ => {} // Ignore unrecognized columns
+                        }
+                    }
+                }
+                
+                // Debug output for first few rows
+                if row_num < 3 {
+                    println!("Row {}: cat_1s={}, cat_5s={}, cat_10s={}, total={}", 
+                        row_num, data.cat_engage_ema_1s_pct, data.cat_engage_ema_5s_pct, 
+                        data.cat_engage_ema_10s_pct, data.total_engagement);
+                }
+                
+                frame_data.push(data);
+            }
+            Err(e) => {
+                eprintln!("Warning: skipping malformed row {}: {}", row_num, e);
+            }
+        }
+    }
+
+    println!("Successfully loaded {} rows of data", frame_data.len());
+    Ok(frame_data)
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -64,19 +183,8 @@ fn main() -> Result<()> {
     let video_path = &args[1];
     let csv_path = &args[2];
 
-    // Load CSV robustly
-    let mut frame_data: Vec<FrameData> = Vec::new();
-    let mut rdr = ReaderBuilder::new()
-        .has_headers(true)      // assumes first line is header
-        .flexible(true)         // allows rows with different number of fields
-        .from_path(csv_path)?;  
-
-    for result in rdr.deserialize() {
-        match result {
-            Ok(record) => frame_data.push(record),
-            Err(e) => eprintln!("Warning: skipping malformed row: {}", e),
-        }
-    }
+    // Load CSV with flexible parsing
+    let frame_data = load_csv_data(csv_path)?;
 
     // Check if any data loaded
     if frame_data.is_empty() {
@@ -243,9 +351,9 @@ fn draw_top_bar(frame: &mut Mat, data: &FrameData, width: i32, height: i32) -> R
     let bar_width = (width / 6) as i32;
     let spacing = 20;
     let bars = [
-        (data.vocals_rms_energy_ema_1s_pct, core::Scalar::new(0.0, 255.0, 0.0, 0.0)),
-        (data.vocals_spectral_ema_1s_pct, core::Scalar::new(0.0, 0.0, 255.0, 0.0)),
-        (data.nonvocals_rms_energy_ema_1s_pct, core::Scalar::new(255.0, 0.0, 0.0, 0.0))
+        (data.vocals_rms_energy_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)),
+        (data.vocals_spectral_ema_1s_pct / 100.0, core::Scalar::new(0.0, 0.0, 255.0, 0.0)),
+        (data.nonvocals_rms_energy_ema_1s_pct / 100.0, core::Scalar::new(255.0, 0.0, 0.0, 0.0))
     ];
     for (i, &(value, color)) in bars.iter().enumerate() {
         let h = (value * height as f64) as i32;
@@ -269,14 +377,14 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
 
     // Engagement categories with their 1s and 10s percentile values
     let engagement_data = [
-        ("Cat", data.cat_engage_ema_1s_pct, data.cat_engage_ema_10s_pct, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
-        ("Transc", data.transc_engage_ema_1s_pct, data.transc_engage_ema_10s_pct, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
-        ("Visual", data.visual_engage_ema_1s_pct, data.visual_engage_ema_10s_pct, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
-        ("Vocals RMS", data.vocals_rms_energy_ema_1s_pct, data.vocals_rms_energy_ema_10s_pct, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
-        ("Vocals Spec", data.vocals_spectral_ema_1s_pct, data.vocals_spectral_ema_10s_pct, core::Scalar::new(128.0, 0.0, 255.0, 0.0)), // Purple
-        ("NonVoc RMS", data.nonvocals_rms_energy_ema_1s_pct, data.nonvocals_rms_energy_ema_10s_pct, core::Scalar::new(255.0, 128.0, 0.0, 0.0)), // Orange
-        ("NonVoc Spec", data.nonvocals_spectral_ema_1s_pct, data.nonvocals_spectral_ema_10s_pct, core::Scalar::new(0.0, 128.0, 255.0, 0.0)), // Light Blue
-        ("Total", data.total_engagement_pct, data.total_engagement_pct, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
+        ("Cat", data.cat_engage_ema_1s_pct / 100.0, data.cat_engage_ema_10s_pct / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
+        ("Transc", data.transc_engage_ema_1s_pct / 100.0, data.transc_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
+        ("Visual", data.visual_engage_ema_1s_pct / 100.0, data.visual_engage_ema_10s_pct / 100.0, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
+        ("Vocals RMS", data.vocals_rms_energy_ema_1s_pct / 100.0, data.vocals_rms_energy_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
+        ("Vocals Spec", data.vocals_spectral_ema_1s_pct / 100.0, data.vocals_spectral_ema_10s_pct / 100.0, core::Scalar::new(128.0, 0.0, 255.0, 0.0)), // Purple
+        ("NonVoc RMS", data.nonvocals_rms_energy_ema_1s_pct / 100.0, data.nonvocals_rms_energy_ema_10s_pct / 100.0, core::Scalar::new(255.0, 128.0, 0.0, 0.0)), // Orange
+        ("NonVoc Spec", data.nonvocals_spectral_ema_1s_pct / 100.0, data.nonvocals_spectral_ema_10s_pct / 100.0, core::Scalar::new(0.0, 128.0, 255.0, 0.0)), // Light Blue
+        ("Total", data.total_engagement_pct / 100.0, data.total_engagement_pct / 100.0, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
     ];
 
     for (i, &(label, val_1s, val_10s, color)) in engagement_data.iter().enumerate() {
@@ -309,7 +417,7 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
         // Value for 1s
         imgproc::put_text(
             frame,
-            &format!("{:.2}", val_1s),
+            &format!("{:.2}", val_1s * 100.0),
             core::Point::new(70 + bar_width_1s + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
             0.4,
@@ -347,7 +455,7 @@ fn draw_bottom_engagement_bars(frame: &mut Mat, data: &FrameData, width: i32, bo
         // Value for 10s
         imgproc::put_text(
             frame,
-            &format!("{:.2}", val_10s),
+            &format!("{:.2}", val_10s * 100.0),
             core::Point::new(x_start_10s + bar_width_10s + 5, y + bar_height - 4),
             imgproc::FONT_HERSHEY_SIMPLEX,
             0.4,
@@ -370,12 +478,12 @@ fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_b
 
     // Vertical bars for key metrics
     let vertical_bars = [
-        ("Attn", data.attention_concentration, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
-        ("Shift", data.attention_shift_rate, core::Scalar::new(255.0, 0.0, 0.0, 0.0)), // Red
-        ("TotEng", data.total_engagement_pct, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
-        ("V1s", data.visual_engage_ema_1s_pct, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
-        ("V3s", data.visual_engage_ema_3s_pct, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
-        ("V10s", data.visual_engage_ema_10s_pct, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
+        ("Attn", data.attention_concentration / 100.0, core::Scalar::new(0.0, 255.0, 0.0, 0.0)), // Green
+        ("Shift", data.attention_shift_rate / 100.0, core::Scalar::new(255.0, 0.0, 0.0, 0.0)), // Red
+        ("TotEng", data.total_engagement_pct / 100.0, core::Scalar::new(255.0, 255.0, 255.0, 0.0)), // White
+        ("V1s", data.visual_engage_ema_1s_pct / 100.0, core::Scalar::new(0.0, 255.0, 255.0, 0.0)), // Yellow
+        ("V3s", data.visual_engage_ema_3s_pct / 100.0, core::Scalar::new(255.0, 255.0, 0.0, 0.0)), // Cyan
+        ("V10s", data.visual_engage_ema_10s_pct / 100.0, core::Scalar::new(255.0, 0.0, 255.0, 0.0)), // Magenta
     ];
 
     for (i, &(label, value, color)) in vertical_bars.iter().enumerate() {
@@ -410,7 +518,7 @@ fn draw_right_vertical_bars(frame: &mut Mat, data: &FrameData, width: i32, top_b
         // Value at top
         imgproc::put_text(
             frame,
-            &format!("{:.2}", value),
+            &format!("{:.2}", value * 100.0),
             core::Point::new(x - 10, y_top - 5),
             imgproc::FONT_HERSHEY_SIMPLEX,
             0.3,
