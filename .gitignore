@@ -15,6 +15,7 @@ scripts/process_transcript/target/*
 scripts/process_spectrals/target/*
 scripts/gui_overlay/target/*
 scripts/data_compiler/target/*
+scripts/finalize/target/*
 example.flac
 example1.flac
 scripts/data_visualization/venv/*
