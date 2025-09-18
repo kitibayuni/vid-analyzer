@@ -7,7 +7,16 @@ import pandas as pd
 from tqdm import tqdm
 import warnings
 import gc
+import threading
+from queue import Queue, Empty
 warnings.filterwarnings("ignore")
+
+# Try to import pyav for faster decoding
+try:
+    import av
+    PYAV_AVAILABLE = True
+except ImportError:
+    PYAV_AVAILABLE = False
 
 print("DeepGazeIIE imported successfully")
 
@@ -18,8 +27,9 @@ parser = argparse.ArgumentParser(description="Extract motion, saliency, and atte
 parser.add_argument("input_video", type=str, help="Path to input video file")
 parser.add_argument("output_csv", type=str, help="Path to output CSV file")
 parser.add_argument("--frame_size", type=int, nargs=2, default=(224, 224), help="Frame size for model input (width height)")
-parser.add_argument("--batch_size", type=int, default=32, help="Batch size for GPU inference")
+parser.add_argument("--batch_size", type=int, default=64, help="Batch size for GPU inference")
 parser.add_argument("--chunk_size", type=int, default=5000, help="Number of frames to process before writing to CSV")
+parser.add_argument("--parallel_decode", action="store_true", help="Enable parallel frame decoding")
 args = parser.parse_args()
 
 VIDEO_PATH = args.input_video
@@ -27,10 +37,13 @@ OUTPUT_CSV = args.output_csv
 FRAME_SIZE = tuple(args.frame_size)
 BATCH_SIZE = args.batch_size
 CHUNK_SIZE = args.chunk_size
+PARALLEL_DECODE = args.parallel_decode and PYAV_AVAILABLE
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 print(f"Using device: {DEVICE}")
 print(f"Frame size: {FRAME_SIZE}, Batch size: {BATCH_SIZE}, Chunk size: {CHUNK_SIZE}")
+if PARALLEL_DECODE:
+    print("Parallel decoding enabled with PyAV")
 
 ################
 ## LOAD MODEL ##
@@ -48,21 +61,62 @@ except Exception as e:
 ## VIDEO CAP ##
 ###############
 cap = None
-try:
-    cap = cv2.VideoCapture(VIDEO_PATH)
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video file: {VIDEO_PATH}")
-    
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / fps
-    
-    print(f"Video: {total_frames} frames @ {fps:.2f} FPS ({duration:.2f} seconds)")
-except Exception as e:
-    print(f"Error opening video: {e}")
-    if cap:
-        cap.release()
-    exit(1)
+container = None
+frame_queue = None
+decode_thread = None
+stop_event = None
+
+if PARALLEL_DECODE:
+    # PyAV parallel setup
+    try:
+        container = av.open(VIDEO_PATH)
+        video_stream = container.streams.video[0]
+        fps = float(video_stream.average_rate)
+        total_frames = video_stream.frames
+        duration = total_frames / fps
+        
+        frame_queue = Queue(maxsize=8)
+        stop_event = threading.Event()
+        
+        def decode_worker():
+            try:
+                for frame_idx, frame in enumerate(container.decode(video_stream)):
+                    if stop_event.is_set():
+                        break
+                    frame_np = frame.to_ndarray(format='rgb24')
+                    frame_resized = cv2.resize(frame_np, FRAME_SIZE)
+                    frame_queue.put((frame_idx, frame_resized))
+            except Exception as e:
+                print(f"Decode error: {e}")
+            finally:
+                frame_queue.put(None)  # End signal
+        
+        decode_thread = threading.Thread(target=decode_worker)
+        decode_thread.start()
+        
+        print(f"Video: {total_frames} frames @ {fps:.2f} FPS ({duration:.2f} seconds)")
+    except Exception as e:
+        print(f"Error with PyAV, falling back to cv2: {e}")
+        PARALLEL_DECODE = False
+        container = None
+
+if not PARALLEL_DECODE:
+    # Original cv2 setup
+    try:
+        cap = cv2.VideoCapture(VIDEO_PATH)
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video file: {VIDEO_PATH}")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps
+        
+        print(f"Video: {total_frames} frames @ {fps:.2f} FPS ({duration:.2f} seconds)")
+    except Exception as e:
+        print(f"Error opening video: {e}")
+        if cap:
+            cap.release()
+        exit(1)
 
 ######################
 ## HELPER FUNCTIONS ##
@@ -132,15 +186,25 @@ try:
         frame_idx = 0
         
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            # Resize frame once
-            frame_resized = cv2.resize(frame, FRAME_SIZE)
+            if PARALLEL_DECODE:
+                # Get frame from queue
+                try:
+                    frame_data = frame_queue.get(timeout=2.0)
+                    if frame_data is None:
+                        break
+                    _, frame_rgb = frame_data
+                except Empty:
+                    break
+            else:
+                # Original cv2 method
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                frame_resized = cv2.resize(frame, FRAME_SIZE)
+                frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
             
             # Motion calculation on grayscale
-            gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
             if prev_gray is not None:
                 diff = cv2.absdiff(gray, prev_gray)
                 motion_intensity = float(np.mean(diff)) / 255.0
@@ -150,7 +214,6 @@ try:
             prev_gray = gray
 
             # Add to batch for saliency processing
-            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
             frames_batch.append(frame_rgb)
 
             # Store frame data (saliency will be updated later)
@@ -259,6 +322,11 @@ try:
                     'mean_saliency', 'max_saliency', 'saliency_entropy', 'saliency_change_rate',
                     'attention_center_x', 'attention_center_y', 'attention_concentration', 'attention_shift_rate'
                 ]
+                # Scale saliency values for better readability and processing
+                df['mean_saliency'] = df['mean_saliency'] * 50000
+                df['max_saliency'] = df['max_saliency'] * 50000
+                df['saliency_change_rate'] = df['saliency_change_rate'] * 50000
+                
                 df = df[final_columns].round(6)
                 mode = 'w' if is_first_chunk else 'a'
                 df.to_csv(OUTPUT_CSV, mode=mode, header=is_first_chunk, index=False)
@@ -268,6 +336,13 @@ try:
 except Exception as e:
     print(f"Critical processing error: {e}")
 finally:
+    if PARALLEL_DECODE:
+        if stop_event:
+            stop_event.set()
+        if decode_thread:
+            decode_thread.join()
+        if container:
+            container.close()
     if cap:
         cap.release()
     if torch.cuda.is_available():
