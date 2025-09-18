@@ -1,0 +1,7 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 17
+Started: Thu Sep 18 17:06:58 EDT 2025
+Input: ./../temp/quicky.mp4
+
+[2025-09-18 17:06:58] === INITIALIZATION ===
+[2025-09-18 17:06:58] ERROR: Missing required dependencies: python

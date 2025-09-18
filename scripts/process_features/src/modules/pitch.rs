@@ -22,7 +22,7 @@ pub fn process(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::e
     let (window_len, hop_len, resolution) = (None, None, None);
 
     // --- CHUNK PARAMETERS ---
-    let chunk_sec = 5.0;
+    let chunk_sec = 60.0;
     let chunk_samples = (chunk_sec * samplerate as f64) as usize;
     let overlap_samples = frame_len;
     println!(

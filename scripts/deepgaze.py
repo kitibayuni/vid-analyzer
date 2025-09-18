@@ -27,7 +27,7 @@ parser = argparse.ArgumentParser(description="Extract motion, saliency, and atte
 parser.add_argument("input_video", type=str, help="Path to input video file")
 parser.add_argument("output_csv", type=str, help="Path to output CSV file")
 parser.add_argument("--frame_size", type=int, nargs=2, default=(224, 224), help="Frame size for model input (width height)")
-parser.add_argument("--batch_size", type=int, default=64, help="Batch size for GPU inference")
+parser.add_argument("--batch_size", type=int, default=128, help="Batch size for GPU inference")
 parser.add_argument("--chunk_size", type=int, default=5000, help="Number of frames to process before writing to CSV")
 parser.add_argument("--parallel_decode", action="store_true", help="Enable parallel frame decoding")
 args = parser.parse_args()
