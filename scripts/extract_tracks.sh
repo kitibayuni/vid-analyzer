@@ -316,8 +316,6 @@ for STREAM_INDEX in $(seq 0 $((NUM_AUDIO_STREAMS - 1))); do
     done
 done
 
-
-
 # --- Video tracks (RE-ENCODED) ---
 echo "=== VIDEO TRACK PROCESSING ==="
 NUM_VIDEO_STREAMS=$(ffprobe -v error -select_streams v \
@@ -339,9 +337,15 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
         if python deepgaze.py "$OUTFILE" "$SALIENCE_OUT" 2>/dev/null; then
             if [ -f "$SALIENCE_OUT" ]; then
                 echo "Processing salience CSV: $SALIENCE_OUT"
+                ENGAGEMENT_OUT="$OUTDIR/${BASENAME}_video${STREAM_INDEX}_salience_engagement.csv"
                 ./salience_process "$SALIENCE_OUT" --time_col time_sec
-                rm -f "$SALIENCE_OUT"
-                echo "✓ Salience processing complete"
+                # The salience_process creates an engagement file, find it
+                if [ -f "$ENGAGEMENT_OUT" ]; then
+                    echo "✓ Salience processing complete: $ENGAGEMENT_OUT"
+                    rm -f "$SALIENCE_OUT"  # Remove intermediate file
+                else
+                    echo "✗ Expected engagement file not found: $ENGAGEMENT_OUT"
+                fi
             else
                 echo "✗ DeepGaze did not generate expected output file"
             fi
@@ -352,6 +356,188 @@ if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
         # --- Clean up video file ---
         rm -f "$OUTFILE"
     done
+fi
+
+echo ""
+echo "=== ROBUST FINALIZE + GUI OVERLAY ==="
+
+# --- Function to find best available merged files ---
+find_best_files() {
+    local vocals_files=()
+    local nonvocals_files=()
+    local video_files=()
+    
+    # Find all vocals merged files
+    while IFS= read -r -d '' file; do
+        vocals_files+=("$file")
+    done < <(find "$OUTDIR" -name "${BASENAME}_audio*_vocals_merged.csv" -print0 2>/dev/null)
+    
+    # Find all nonvocals merged files  
+    while IFS= read -r -d '' file; do
+        nonvocals_files+=("$file")
+    done < <(find "$OUTDIR" -name "${BASENAME}_audio*_nonvocals_merged.csv" -print0 2>/dev/null)
+    
+    # Find all video engagement files (corrected pattern)
+    while IFS= read -r -d '' file; do
+        video_files+=("$file")
+    done < <(find "$OUTDIR" -name "${BASENAME}_video*_salience_engagement.csv" -print0 2>/dev/null)
+    
+    # Return counts and first file of each type
+    echo "${#vocals_files[@]} ${#nonvocals_files[@]} ${#video_files[@]}"
+    echo "${vocals_files[0]:-}"
+    echo "${nonvocals_files[0]:-}"  
+    echo "${video_files[0]:-}"
+}
+
+# Get available files
+file_info=($(find_best_files))
+VOCALS_COUNT="${file_info[0]}"
+NONVOCALS_COUNT="${file_info[1]}"
+VIDEO_COUNT="${file_info[2]}"
+BEST_VOCALS="${file_info[3]}"
+BEST_NONVOCALS="${file_info[4]}"
+BEST_VIDEO="${file_info[5]}"
+
+echo "Available files for finalization:"
+echo "  Vocals files: $VOCALS_COUNT found"
+echo "  Nonvocals files: $NONVOCALS_COUNT found"
+echo "  Video files: $VIDEO_COUNT found"
+
+# Validate file existence
+[ -n "$BEST_VOCALS" ] && [ ! -f "$BEST_VOCALS" ] && BEST_VOCALS=""
+[ -n "$BEST_NONVOCALS" ] && [ ! -f "$BEST_NONVOCALS" ] && BEST_NONVOCALS=""
+[ -n "$BEST_VIDEO" ] && [ ! -f "$BEST_VIDEO" ] && BEST_VIDEO=""
+
+echo ""
+echo "Selected files for finalization:"
+echo "  Best vocals: ${BEST_VOCALS:-NONE FOUND}"
+echo "  Best nonvocals: ${BEST_NONVOCALS:-NONE FOUND}"
+echo "  Best video: ${BEST_VIDEO:-NONE FOUND}"
+echo ""
+
+FINALIZED_OUT="$OUTDIR/${BASENAME}_finalized.csv"
+FINALIZE_SUCCESS=false
+
+# --- Multiple finalization strategies based on available files ---
+if [ -n "$BEST_VOCALS" ] && [ -n "$BEST_NONVOCALS" ] && [ -n "$BEST_VIDEO" ]; then
+    echo "Strategy: Full finalization (vocals + nonvocals + video)"
+    echo "  Using: $(basename "$BEST_VOCALS"), $(basename "$BEST_NONVOCALS"), $(basename "$BEST_VIDEO")"
+    if ./finalize --vocals "$BEST_VOCALS" --nonvocals "$BEST_NONVOCALS" --video "$BEST_VIDEO" --output "$FINALIZED_OUT"; then
+        echo "✓ Full finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Full finalize failed, trying partial strategies..."
+    fi
+elif [ -n "$BEST_VOCALS" ] && [ -n "$BEST_NONVOCALS" ]; then
+    echo "Strategy: Audio-only finalization (vocals + nonvocals)"
+    echo "  Using: $(basename "$BEST_VOCALS"), $(basename "$BEST_NONVOCALS")"
+    if ./finalize --vocals "$BEST_VOCALS" --nonvocals "$BEST_NONVOCALS" --output "$FINALIZED_OUT"; then
+        echo "✓ Audio-only finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Audio-only finalize failed, trying individual strategies..."
+    fi
+elif [ -n "$BEST_VOCALS" ] && [ -n "$BEST_VIDEO" ]; then
+    echo "Strategy: Vocals + Video finalization"
+    echo "  Using: $(basename "$BEST_VOCALS"), $(basename "$BEST_VIDEO")"
+    if ./finalize --vocals "$BEST_VOCALS" --video "$BEST_VIDEO" --output "$FINALIZED_OUT"; then
+        echo "✓ Vocals+Video finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Vocals+Video finalize failed, trying individual strategies..."
+    fi
+elif [ -n "$BEST_NONVOCALS" ] && [ -n "$BEST_VIDEO" ]; then
+    echo "Strategy: Nonvocals + Video finalization"
+    echo "  Using: $(basename "$BEST_NONVOCALS"), $(basename "$BEST_VIDEO")"
+    if ./finalize --nonvocals "$BEST_NONVOCALS" --video "$BEST_VIDEO" --output "$FINALIZED_OUT"; then
+        echo "✓ Nonvocals+Video finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Nonvocals+Video finalize failed, trying individual strategies..."
+    fi
+elif [ -n "$BEST_VOCALS" ]; then
+    echo "Strategy: Vocals-only finalization"
+    echo "  Using: $(basename "$BEST_VOCALS")"
+    if ./finalize --vocals "$BEST_VOCALS" --output "$FINALIZED_OUT"; then
+        echo "✓ Vocals-only finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Vocals-only finalize failed"
+    fi
+elif [ -n "$BEST_NONVOCALS" ]; then
+    echo "Strategy: Nonvocals-only finalization"
+    echo "  Using: $(basename "$BEST_NONVOCALS")"
+    if ./finalize --nonvocals "$BEST_NONVOCALS" --output "$FINALIZED_OUT"; then
+        echo "✓ Nonvocals-only finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Nonvocals-only finalize failed"
+    fi
+elif [ -n "$BEST_VIDEO" ]; then
+    echo "Strategy: Video-only finalization"
+    echo "  Using: $(basename "$BEST_VIDEO")"
+    if ./finalize --video "$BEST_VIDEO" --output "$FINALIZED_OUT"; then
+        echo "✓ Video-only finalize complete: $FINALIZED_OUT"
+        FINALIZE_SUCCESS=true
+    else
+        echo "✗ Video-only finalize failed"
+    fi
+else
+    echo "✗ No suitable CSV files found for finalization"
+    echo "  Expected at least one of: vocals_merged.csv, nonvocals_merged.csv, salience_engagement.csv"
+fi
+
+# --- Handle multiple audio streams if needed ---
+if [ "$FINALIZE_SUCCESS" = false ] && [ "$VOCALS_COUNT" -gt 1 ] || [ "$NONVOCALS_COUNT" -gt 1 ]; then
+    echo ""
+    echo "Attempting finalization with alternative audio streams..."
+    
+    # Find all vocals and nonvocals files for iteration
+    ALL_VOCALS=($(find "$OUTDIR" -name "${BASENAME}_audio*_vocals_merged.csv" 2>/dev/null))
+    ALL_NONVOCALS=($(find "$OUTDIR" -name "${BASENAME}_audio*_nonvocals_merged.csv" 2>/dev/null))
+    
+    for vocals_file in "${ALL_VOCALS[@]}"; do
+        for nonvocals_file in "${ALL_NONVOCALS[@]}"; do
+            # Skip if we already tried this combination
+            if [ "$vocals_file" = "$BEST_VOCALS" ] && [ "$nonvocals_file" = "$BEST_NONVOCALS" ]; then
+                continue
+            fi
+            
+            echo "Trying: $(basename "$vocals_file") + $(basename "$nonvocals_file")"
+            if [ -n "$BEST_VIDEO" ]; then
+                if ./finalize --vocals "$vocals_file" --nonvocals "$nonvocals_file" --video "$BEST_VIDEO" --output "$FINALIZED_OUT"; then
+                    echo "✓ Alternative finalize successful with video"
+                    FINALIZE_SUCCESS=true
+                    break 2
+                fi
+            else
+                if ./finalize --vocals "$vocals_file" --nonvocals "$nonvocals_file" --output "$FINALIZED_OUT"; then
+                    echo "✓ Alternative finalize successful (audio only)"
+                    FINALIZE_SUCCESS=true
+                    break 2
+                fi
+            fi
+        done
+    done
+fi
+
+# --- GUI Overlay generation (only if finalization succeeded) ---
+if [ "$FINALIZE_SUCCESS" = true ] && [ -f "$FINALIZED_OUT" ]; then
+    OVERLAY_OUT="$(dirname "$INPUT")/${BASENAME}_data_overlay.mp4"
+    echo ""
+    echo "Running GUI overlay generation..."
+    echo "  Input video: $INPUT"
+    echo "  Finalized data: $FINALIZED_OUT"
+    echo "  Output video: $OVERLAY_OUT"
+    
+    if ./gui_overlay "$INPUT" "$FINALIZED_OUT" "$OVERLAY_OUT"; then
+        echo "✓ Overlay video created successfully: $OVERLAY_OUT"
+    else
+        echo "✗ GUI overlay generation failed"
+        echo "  Finalized data is still available at: $FINALIZED_OUT"
+    fi
+else
+    echo "⚠ Skipping GUI overlay generation (finalization failed or no data)"
 fi
 
 echo "=== PROCESSING COMPLETE ==="
@@ -387,13 +573,24 @@ fi
 # --- List processed video outputs ---
 if [ "$NUM_VIDEO_STREAMS" -gt 0 ]; then
     for STREAM_INDEX in $(seq 0 $((NUM_VIDEO_STREAMS - 1))); do
-        VIDEO_CSV="$OUTDIR/${BASENAME}_video${STREAM_INDEX}_salience_processed.csv"
+        VIDEO_CSV="$OUTDIR/${BASENAME}_video${STREAM_INDEX}_salience_engagement.csv"
         if [ -f "$VIDEO_CSV" ]; then
             echo "  - Video${STREAM_INDEX}: $(basename "$VIDEO_CSV")"
         else
-            echo "  - Video${STREAM_INDEX}: no salience CSV generated"
+            echo "  - Video${STREAM_INDEX}: no salience engagement CSV generated"
         fi
     done
 else
     echo "  - No video streams detected"
+fi
+
+# --- Show finalization results ---
+echo ""
+if [ -f "$FINALIZED_OUT" ]; then
+    echo "✓ Final combined data: $(basename "$FINALIZED_OUT")"
+    if [ -f "$(dirname "$INPUT")/${BASENAME}_data_overlay.mp4" ]; then
+        echo "✓ Data overlay video: ${BASENAME}_data_overlay.mp4"
+    fi
+else
+    echo "✗ No finalized combined data generated"
 fi

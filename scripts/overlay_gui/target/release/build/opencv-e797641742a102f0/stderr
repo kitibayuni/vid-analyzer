@@ -1,0 +1,369 @@
+=== Crate version: 0.95.1
+=== Environment configuration:
+===   OPENCV_PACKAGE_NAME = None
+===   OPENCV_PKGCONFIG_NAME = None
+===   OPENCV_CMAKE_NAME = None
+===   OPENCV_CMAKE_BIN = None
+===   OPENCV_VCPKG_NAME = None
+===   OPENCV_LINK_LIBS = None
+===   OPENCV_LINK_PATHS = None
+===   OPENCV_INCLUDE_PATHS = None
+===   OPENCV_DISABLE_PROBES = None
+===   OPENCV_MSVC_CRT = None
+===   CMAKE_PREFIX_PATH = None
+===   OpenCV_DIR = None
+===   PKG_CONFIG_PATH = None
+===   VCPKG_ROOT = None
+===   VCPKGRS_DYNAMIC = None
+===   VCPKGRS_TRIPLET = None
+===   OCVRS_DOCS_GENERATE_DIR = None
+===   DOCS_RS = None
+===   PATH = Some("/home/administrator/.cargo/bin:/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/data_visualization/venv/bin:/home/administrator/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/usr/lib/wsl/lib:/mnt/c/WINDOWS/system32:/mnt/c/WINDOWS:/mnt/c/WINDOWS/System32/Wbem:/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/:/mnt/c/WINDOWS/System32/OpenSSH/:/mnt/c/Program Files/Docker/Docker/resources/bin:/mnt/c/Program Files/dotnet/:/mnt/c/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/:/mnt/c/Program Files (x86)/NVIDIA Corporation/PhysX/Common:/mnt/c/ProgramData/chocolatey/bin:/mnt/c/Program Files/nodejs/:/mnt/c/Program Files/Git/cmd:/mnt/c/Program Files/Tailscale/:/mnt/c/Program Files/PuTTY/:/mnt/c/Users/Administrator/.rustup/toolchains/esp/xtensa-esp32-elf-clang/esp-clang/bin:/mnt/c/Users/Administrator/.rustup/toolchains/esp/xtensa-esp-elf/bin:/mnt/c/Espressif/tools/idf-python/3.11.2/:/mnt/c/Espressif/tools/idf-git/2.44.0/cmd/:/mnt/c/WINDOWS/system32:/mnt/c/WINDOWS:/mnt/c/WINDOWS/System32/Wbem:/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/:/mnt/c/WINDOWS/System32/OpenSSH/:/mnt/c/Program Files/Docker/Docker/resources/bin:/mnt/c/Program Files/dotnet/:/mnt/c/Program Files (x86)/Windows Kits/10/Windows Performance Toolkit/:/mnt/c/Program Files (x86)/NVIDIA Corporation/PhysX/Common:/mnt/c/ProgramData/chocolatey/bin:/mnt/c/Program Files/nodejs/:/mnt/c/Program Files/Git/cmd:/mnt/c/Users/Administrator/.cargo/bin:/mnt/c/Users/Administrator/AppData/Local/Programs/Python/Python313/Scripts/:/mnt/c/Users/Administrator/AppData/Local/Programs/Python/Python313/:/mnt/c/Users/Administrator/AppData/Local/Microsoft/WindowsApps:/mnt/c/Users/Administrator/.dotnet/tools:/mnt/c/Users/Administrator/AppData/Local/Programs/Microsoft VS Code/bin:/mnt/c/Users/Administrator/AppData/Roaming/npm:/mnt/c/Users/Administrator/AppData/Local/Muse Hub/lib:/mnt/c/Users/Administrator/.lmstudio/bin:/snap/bin")
+=== Enabled features:
+===   3D
+===   ALPHAMAT
+===   ARUCO
+===   ARUCO_DETECTOR
+===   BARCODE
+===   BGSEGM
+===   BIOINSPIRED
+===   CALIB
+===   CALIB3D
+===   CCALIB
+===   CUDAARITHM
+===   CUDABGSEGM
+===   CUDACODEC
+===   CUDAFEATURES2D
+===   CUDAFILTERS
+===   CUDAIMGPROC
+===   CUDALEGACY
+===   CUDAOBJDETECT
+===   CUDAOPTFLOW
+===   CUDASTEREO
+===   CUDAWARPING
+===   CVV
+===   DEFAULT
+===   DNN
+===   DNN_SUPERRES
+===   DPM
+===   FACE
+===   FEATURES
+===   FEATURES2D
+===   FLANN
+===   FREETYPE
+===   FUZZY
+===   GAPI
+===   HDF
+===   HFS
+===   HIGHGUI
+===   IMGCODECS
+===   IMGPROC
+===   IMG_HASH
+===   INTENSITY_TRANSFORM
+===   LINE_DESCRIPTOR
+===   MCC
+===   ML
+===   OBJDETECT
+===   OPTFLOW
+===   OVIS
+===   PHASE_UNWRAPPING
+===   PHOTO
+===   PLOT
+===   QUALITY
+===   RAPID
+===   RGBD
+===   SALIENCY
+===   SFM
+===   SHAPE
+===   SIGNAL
+===   STEREO
+===   STITCHING
+===   STRUCTURED_LIGHT
+===   SUPERRES
+===   SURFACE_MATCHING
+===   TEXT
+===   TRACKING
+===   VIDEO
+===   VIDEOIO
+===   VIDEOSTAB
+===   VIZ
+===   WECHAT_QRCODE
+===   XFEATURES2D
+===   XIMGPROC
+===   XOBJDETECT
+===   XPHOTO
+===   XSTEREO
+=== Detected probe priority boost based on environment vars: pkg_config: false, cmake: false, vcpkg: false
+=== Probing the OpenCV library in the following order: environment, pkg_config, cmake, vcpkg_cmake, vcpkg
+=== Can't probe using: environment, continuing with other methods because: Some environment variables are missing
+=== Probing OpenCV library using pkg_config
+=== Trying multiarch paths: ["x86_64-linux-gnu"]
+=== Successfully probed using: pkg_config
+=== OpenCV library configuration: Library {
+    include_paths: [
+        "/usr/include/opencv4",
+        "/usr/include/x86_64-linux-gnu/opencv4",
+    ],
+    version: Version {
+        major: 4,
+        minor: 6,
+        patch: 0,
+    },
+    inherent_features: [
+        "eigen",
+        "gdal",
+        "openjpeg",
+        "jpeg",
+        "libpng_png_h",
+        "gdcm",
+        "opencl",
+        "openexr",
+        "opengl",
+        "png",
+        "pthread",
+        "pthreads_pf",
+        "tbb",
+        "tiff",
+        "va",
+        "lapack",
+        "quirc",
+    ],
+    cargo_metadata: [
+        "cargo::rustc-link-search=/usr/lib/x86_64-linux-gnu",
+        "cargo::rustc-link-lib=opencv_stitching",
+        "cargo::rustc-link-lib=opencv_alphamat",
+        "cargo::rustc-link-lib=opencv_aruco",
+        "cargo::rustc-link-lib=opencv_barcode",
+        "cargo::rustc-link-lib=opencv_bgsegm",
+        "cargo::rustc-link-lib=opencv_bioinspired",
+        "cargo::rustc-link-lib=opencv_ccalib",
+        "cargo::rustc-link-lib=opencv_cvv",
+        "cargo::rustc-link-lib=opencv_dnn_objdetect",
+        "cargo::rustc-link-lib=opencv_dnn_superres",
+        "cargo::rustc-link-lib=opencv_dpm",
+        "cargo::rustc-link-lib=opencv_face",
+        "cargo::rustc-link-lib=opencv_freetype",
+        "cargo::rustc-link-lib=opencv_fuzzy",
+        "cargo::rustc-link-lib=opencv_hdf",
+        "cargo::rustc-link-lib=opencv_hfs",
+        "cargo::rustc-link-lib=opencv_img_hash",
+        "cargo::rustc-link-lib=opencv_intensity_transform",
+        "cargo::rustc-link-lib=opencv_line_descriptor",
+        "cargo::rustc-link-lib=opencv_mcc",
+        "cargo::rustc-link-lib=opencv_quality",
+        "cargo::rustc-link-lib=opencv_rapid",
+        "cargo::rustc-link-lib=opencv_reg",
+        "cargo::rustc-link-lib=opencv_rgbd",
+        "cargo::rustc-link-lib=opencv_saliency",
+        "cargo::rustc-link-lib=opencv_shape",
+        "cargo::rustc-link-lib=opencv_stereo",
+        "cargo::rustc-link-lib=opencv_structured_light",
+        "cargo::rustc-link-lib=opencv_phase_unwrapping",
+        "cargo::rustc-link-lib=opencv_superres",
+        "cargo::rustc-link-lib=opencv_optflow",
+        "cargo::rustc-link-lib=opencv_surface_matching",
+        "cargo::rustc-link-lib=opencv_tracking",
+        "cargo::rustc-link-lib=opencv_highgui",
+        "cargo::rustc-link-lib=opencv_datasets",
+        "cargo::rustc-link-lib=opencv_text",
+        "cargo::rustc-link-lib=opencv_plot",
+        "cargo::rustc-link-lib=opencv_ml",
+        "cargo::rustc-link-lib=opencv_videostab",
+        "cargo::rustc-link-lib=opencv_videoio",
+        "cargo::rustc-link-lib=opencv_viz",
+        "cargo::rustc-link-lib=opencv_wechat_qrcode",
+        "cargo::rustc-link-lib=opencv_ximgproc",
+        "cargo::rustc-link-lib=opencv_video",
+        "cargo::rustc-link-lib=opencv_xobjdetect",
+        "cargo::rustc-link-lib=opencv_objdetect",
+        "cargo::rustc-link-lib=opencv_calib3d",
+        "cargo::rustc-link-lib=opencv_imgcodecs",
+        "cargo::rustc-link-lib=opencv_features2d",
+        "cargo::rustc-link-lib=opencv_dnn",
+        "cargo::rustc-link-lib=opencv_flann",
+        "cargo::rustc-link-lib=opencv_xphoto",
+        "cargo::rustc-link-lib=opencv_photo",
+        "cargo::rustc-link-lib=opencv_imgproc",
+        "cargo::rustc-link-lib=opencv_core",
+    ],
+}
+=== Found OpenCV version: 4.6.0 in headers located at: /usr/include/opencv4
+=== Detected OpenCV module header dir at: /usr/include/opencv4/opencv2
+=== Generating code in: /mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out
+=== Placing generated bindings into: /mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out/opencv
+=== Using OpenCV headers from: /usr/include/opencv4
+=== Clang: Ubuntu clang version 18.1.3 (1ubuntu1)
+=== Clang command line args: [
+    "-isystem/usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13",
+    "-isystem/usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/x86_64-linux-gnu/c++/13",
+    "-isystem/usr/lib/gcc/x86_64-linux-gnu/13/../../../../include/c++/13/backward",
+    "-isystem/usr/lib/llvm-18/lib/clang/18/include",
+    "-isystem/usr/local/include",
+    "-isystem/usr/include/x86_64-linux-gnu",
+    "-isystem/usr/include",
+    "-isystem/usr/include/x86_64-linux-gnu/opencv4",
+    "-I/usr/include/opencv4",
+    "-F/usr/include/opencv4",
+    "-I/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp",
+    "-F/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp",
+    "-DOCVRS_PARSING_HEADERS",
+    "-includeocvrs_common.hpp",
+    "-std=c++17",
+]
+=== Using environment job server with the the amount of available jobs: 24
+=== Generating 52 modules
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "alphamat" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "bgsegm" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "barcode" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "aruco" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "calib3d" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "bioinspired" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "ccalib" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "freetype" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "cvv" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "dnn" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "img_hash" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "dpm" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "face" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "features2d" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "flann" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "core" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "fuzzy" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "dnn_superres" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "hfs" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "highgui" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "hdf" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "imgcodecs" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "imgproc" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "intensity_transform" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: alphamat in: 1.901896155s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "line_descriptor" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: intensity_transform in: 1.9152615s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "mcc" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: fuzzy in: 1.96754964s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "ml" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: dpm in: 1.980798962s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "objdetect" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: barcode in: 2.007374207s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "optflow" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: highgui in: 2.030050311s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "phase_unwrapping" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: cvv in: 2.035225915s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "photo" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: hfs in: 2.06505235s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "plot" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: dnn_superres in: 2.107421566s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "quality" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: freetype in: 2.122699011s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "rapid" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: imgcodecs in: 2.164254505s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "rgbd" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: flann in: 2.291784062s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "saliency" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: hdf in: 2.472154124s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "shape" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: bioinspired in: 2.782327833s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "stereo" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: img_hash in: 3.202810236s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "stitching" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: phase_unwrapping in: 1.507646015s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "structured_light" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: plot in: 1.519651833s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "superres" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: stereo in: 1.188217396s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "surface_matching" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: imgproc in: 4.110661648s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "text" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: mcc in: 2.231195944s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "tracking" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: rapid in: 2.259028485s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "video" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: aruco in: 4.521127507s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "videoio" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: bgsegm in: 4.97495887s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "videostab" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: saliency in: 2.881863055s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "viz" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: objdetect in: 3.265323421s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "wechat_qrcode" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: surface_matching in: 1.386145995s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "ximgproc" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: tracking in: 1.224873663s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "xobjdetect" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: line_descriptor in: 3.665134285s
+=== Running: "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-0180edc61c0f7307/build-script-build" "/usr/include/opencv4" "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp" "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out" "xphoto" "/usr/include/x86_64-linux-gnu/opencv4"
+=== Generated module bindings: core in: 5.60048067s
+=== Generated module bindings: videoio in: 1.260425395s
+=== Generated module bindings: calib3d in: 5.82984938s
+=== Generated module bindings: wechat_qrcode in: 855.285251ms
+=== Generated module bindings: xobjdetect in: 922.464708ms
+=== Generated module bindings: quality in: 4.223926844s
+=== Generated module bindings: viz in: 1.193285404s
+=== Generated module bindings: structured_light in: 2.880879168s
+=== Generated module bindings: face in: 6.709356422s
+=== Generated module bindings: video in: 2.781018713s
+=== Generated module bindings: superres in: 3.623295958s
+=== Generated module bindings: photo in: 5.233780236s
+=== Generated module bindings: text in: 3.353777008s
+=== Generated module bindings: xphoto in: 2.049028381s
+=== Generated module bindings: ccalib in: 7.826658787s
+=== Generated module bindings: shape in: 5.369490663s
+=== Generated module bindings: rgbd in: 5.755032187s
+=== Generated module bindings: optflow in: 5.933424782s
+=== Generated module bindings: ml in: 6.188949864s
+=== Generated module bindings: videostab in: 3.39077077s
+=== Generated module bindings: stitching in: 5.48424575s
+=== Generated module bindings: features2d in: 8.768569314s
+=== Generated module bindings: ximgproc in: 6.716773351s
+=== Generated module bindings: dnn in: 30.39834874s
+=== Total binding generation time: 30.401403017s
+=== Total binding collection time: 3.795808616s
+=== Compiler information: Tool {
+    path: "c++",
+    cc_wrapper_path: None,
+    cc_wrapper_args: [],
+    args: [
+        "-O3",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-fPIC",
+        "-m64",
+        "-std=c++17",
+        "-I",
+        "/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/opencv-0.95.1/src_cpp",
+        "-I",
+        "/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/opencv-e797641742a102f0/out",
+        "-I",
+        ".",
+        "-I",
+        "/usr/include/opencv4",
+        "-I",
+        "/usr/include/x86_64-linux-gnu/opencv4",
+        "-Wall",
+        "-Wextra",
+        "-Wno-deprecated-declarations",
+        "-Wno-deprecated-copy",
+        "-Wno-unused-parameter",
+        "-Wno-sign-compare",
+        "-Wno-comment",
+        "-Wno-uninitialized",
+        "-Wno-unused-variable",
+        "-Wno-ignored-qualifiers",
+        "-Wno-return-type-c-linkage",
+        "-Wno-overloaded-virtual",
+        "-Wno-delete-non-virtual-dtor",
+        "-DOCVRS_FFI_EXPORT_SUFFIX=_0_95_1",
+        "-DOCVRS_TARGET_OS_WINDOWS=0",
+    ],
+    env: [
+        (
+            "LC_ALL",
+            "C",
+        ),
+    ],
+    family: Gnu,
+    cuda: false,
+    removed_args: [],
+    has_internal_target_arg: false,
+}
+=== Total cpp build time: 23.676329534s
