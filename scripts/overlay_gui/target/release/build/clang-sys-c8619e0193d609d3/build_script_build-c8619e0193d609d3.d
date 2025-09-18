@@ -1,9 +1,0 @@
-/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/clang-sys-c8619e0193d609d3/build_script_build-c8619e0193d609d3.d: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/macros.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/common.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/dynamic.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/static.rs
-
-/mnt/c/Users/Administrator/Code/vid-analyzer/scripts/gui_overlay/target/release/build/clang-sys-c8619e0193d609d3/build_script_build-c8619e0193d609d3: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/macros.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/common.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/dynamic.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/static.rs
-
-/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build.rs:
-/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/macros.rs:
-/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/common.rs:
-/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/dynamic.rs:
-/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clang-sys-1.8.1/build/static.rs:
