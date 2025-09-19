@@ -3,13 +3,27 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import pandas as pd
-import tempfile
-import os
 import soundfile as sf
 from transformers import Wav2Vec2ForSequenceClassification, Wav2Vec2FeatureExtractor
 from speechbrain.inference.interfaces import foreign_class
 
-def main(input_file, output_file, chunk_sec=5, msp_model_path=None, device='cpu'):
+def auto_batch_size(chunk_tensors, device, memory_headroom=0.1):
+    """Estimate max batch size given GPU memory and tensors, leaving some headroom."""
+    if device == "cpu" or not torch.cuda.is_available():
+        return 32  # reasonable default for CPU
+    # Approximate memory per chunk in bytes
+    sample_chunk = chunk_tensors[0]
+    chunk_mem = sample_chunk.numel() * sample_chunk.element_size()
+    # Get available GPU memory
+    total_mem = torch.cuda.get_device_properties(device).total_memory
+    reserved_mem = torch.cuda.memory_reserved(device)
+    free_mem = total_mem - reserved_mem
+    usable_mem = free_mem * (1 - memory_headroom)
+    # Estimate batch size
+    batch_size = int(usable_mem / chunk_mem)
+    return max(1, batch_size)
+
+def main(input_file, output_file, chunk_sec=5, msp_model_path=None, device='cpu', batch_size=None):
     # -------------------------------
     # Load audio
     # -------------------------------
@@ -61,146 +75,146 @@ def main(input_file, output_file, chunk_sec=5, msp_model_path=None, device='cpu'
     print(f"Total chunks: {len(chunks)}, chunk size: {chunk_samples} samples (~{chunk_sec}s)")
 
     # -------------------------------
-    # Prepare output
+    # Collect chunk metadata & normalize
     # -------------------------------
-    output_rows = []
+    chunk_tensors = []
+    chunk_meta = []
 
     for i, chunk in enumerate(chunks):
         if len(chunk) == 0:
             continue
 
-        # Pad short chunks
+        # Pad very short chunks
         if len(chunk) < 1600:
-            chunk = np.pad(chunk, (0, 1600 - len(chunk)), mode='constant')
+            chunk = np.pad(chunk, (0, 1600 - len(chunk)), mode="constant")
 
-        row = {
+        # Normalize to [-1,1]
+        chunk = chunk.astype(np.float32)
+        if np.max(np.abs(chunk)) > 1.0:
+            chunk = chunk / np.max(np.abs(chunk))
+
+        # Torch tensor (time) → will batch later
+        chunk_tensors.append(torch.tensor(chunk, dtype=torch.float32))
+        chunk_meta.append({
             "chunk_index": i,
             "start_sec": i * chunk_sec,
-            "end_sec": min((i+1) * chunk_sec, len(audio)/sr)
-        }
+            "end_sec": min((i + 1) * chunk_sec, len(audio) / sr),
+        })
 
-        # -------------------------------
-        # MSP-Dim VAD inference
-        # -------------------------------
+    # -------------------------------
+    # Auto batch size if not provided
+    # -------------------------------
+    if batch_size is None:
+        batch_size = auto_batch_size(chunk_tensors, device)
+    print(f"Using batch size: {batch_size}")
+
+    # -------------------------------
+    # Process in batches
+    # -------------------------------
+    output_rows = []
+
+    for b in range(0, len(chunk_tensors), batch_size):
+        batch_tensors = chunk_tensors[b:b + batch_size]
+        batch_meta = chunk_meta[b:b + batch_size]
+
+        # MSP-Dim inference
+        vad_results = []
         if msp_model is not None and msp_feature_extractor is not None:
             try:
-                inputs = msp_feature_extractor(chunk, sampling_rate=sr, return_tensors="pt", padding=True)
-                input_values = inputs.input_values.to(device)
+                inputs = msp_feature_extractor(
+                    [x.numpy() for x in batch_tensors],
+                    sampling_rate=sr,
+                    return_tensors="pt",
+                    padding=True
+                )
                 with torch.no_grad():
-                    logits = msp_model(input_values).logits
-                probs = F.softmax(logits, dim=-1)[0]
-                # MSP-Dim outputs: valence, arousal, dominance
-                row.update({
-                    "valence": float(probs[0]),
-                    "arousal": float(probs[1]),
-                    "dominance": float(probs[2])
-                })
-            except Exception as e:
-                print(f"Error processing chunk {i} with MSP-Dim model: {e}")
-                row.update({
-                    "valence": 0.0,
-                    "arousal": 0.0,
-                    "dominance": 0.0
-                })
-        else:
-            row.update({
-                "valence": 0.0,
-                "arousal": 0.0,
-                "dominance": 0.0
-            })
+                    logits = msp_model(inputs.input_values.to(device)).logits
+                probs = F.softmax(logits, dim=-1).cpu().numpy()
 
-        # -------------------------------
-        # SpeechBrain categorical emotions
-        # -------------------------------
+                for j in range(len(batch_meta)):
+                    vad_results.append({
+                        "valence": float(probs[j][0]),
+                        "arousal": float(probs[j][1]),
+                        "dominance": float(probs[j][2]),
+                    })
+            except Exception as e:
+                print(f"Error in MSP-Dim batch {b//batch_size}: {e}")
+                for _ in batch_meta:
+                    vad_results.append({"valence": 0.0, "arousal": 0.0, "dominance": 0.0})
+        else:
+            for _ in batch_meta:
+                vad_results.append({"valence": 0.0, "arousal": 0.0, "dominance": 0.0})
+
+        # SpeechBrain inference
+        sb_results = []
         if sb_model is not None:
             try:
-                # Ensure chunk is float32 and properly normalized
-                chunk_normalized = chunk.astype(np.float32)
-                if np.max(np.abs(chunk_normalized)) > 1.0:
-                    chunk_normalized = chunk_normalized / np.max(np.abs(chunk_normalized))
-                
-                # Create temporary wav file
-                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-                    sf.write(temp_wav.name, chunk_normalized, sr)
-                    temp_wav_path = temp_wav.name
-                
-                # Get emotion prediction
+                batch_tensor = torch.stack(batch_tensors).to(device)
                 with torch.no_grad():
-                    out_prob, score, index, text_lab = sb_model.classify_file(temp_wav_path)
-                
-                # Clean up temp file
-                os.unlink(temp_wav_path)
-                
-                # Process probabilities
-                if isinstance(out_prob, torch.Tensor):
-                    probs = out_prob.detach().cpu().numpy()
-                else:
-                    probs = np.array(out_prob)
-                
-                if len(probs.shape) > 1:
-                    probs = probs.squeeze()
-                
-                # IEMOCAP labels in model order: neu, hap, ang, sad
-                iemocap_labels = ['neu', 'hap', 'ang', 'sad']
-                
-                # Add emotion probabilities
-                for j, label in enumerate(iemocap_labels):
-                    row[f"cat_{label}"] = float(probs[j]) if j < len(probs) else 0.0
-                
-                # Add predicted emotion and confidence
-                predicted_emotion = str(text_lab[0]) if isinstance(text_lab, list) else str(text_lab)
-                predicted_emotion = predicted_emotion.strip("[]'\"")  # Clean up formatting
-                
-                row["predicted_emotion"] = predicted_emotion
-                row["confidence"] = float(score.item()) if isinstance(score, torch.Tensor) else float(score)
-                
+                    out_prob, score, index, text_lab = sb_model.classify_batch(batch_tensor)
+
+                probs = out_prob.detach().cpu().numpy()
+                scores = score.detach().cpu().numpy() if isinstance(score, torch.Tensor) else np.array(score)
+
+                for j in range(len(batch_meta)):
+                    row = {}
+                    labels = ["neu", "hap", "ang", "sad"]
+                    for k, lab in enumerate(labels):
+                        row[f"cat_{lab}"] = float(probs[j][k]) if k < probs.shape[1] else 0.0
+                    pred = str(text_lab[j]) if isinstance(text_lab, (list, tuple)) else str(text_lab)
+                    row["predicted_emotion"] = pred.strip("[]'\"")
+                    row["confidence"] = float(scores[j])
+                    sb_results.append(row)
             except Exception as e:
-                print(f"Error processing chunk {i} with SpeechBrain model: {e}")
-                # Add default emotion categories
-                for label in ['neu', 'hap', 'ang', 'sad']:
-                    row[f"cat_{label}"] = 0.0
-                row["predicted_emotion"] = "unknown"
-                row["confidence"] = 0.0
+                print(f"Error in SpeechBrain batch {b//batch_size}: {e}")
+                for _ in batch_meta:
+                    sb_results.append({
+                        "cat_neu": 0.0, "cat_hap": 0.0, "cat_ang": 0.0, "cat_sad": 0.0,
+                        "predicted_emotion": "unknown", "confidence": 0.0
+                    })
         else:
-            # If SpeechBrain model failed to load, add default categories
-            for label in ['neu', 'hap', 'ang', 'sad']:
-                row[f"cat_{label}"] = 0.0
-            row["predicted_emotion"] = "unknown" 
-            row["confidence"] = 0.0
+            for _ in batch_meta:
+                sb_results.append({
+                    "cat_neu": 0.0, "cat_hap": 0.0, "cat_ang": 0.0, "cat_sad": 0.0,
+                    "predicted_emotion": "unknown", "confidence": 0.0
+                })
 
-        output_rows.append(row)
-        
-        # Print progress every 50 chunks
-        if (i + 1) % 50 == 0:
-            print(f"Processed {i + 1}/{len(chunks)} chunks...")
+        # Combine results
+        for j, meta in enumerate(batch_meta):
+            row = {}
+            row.update(meta)
+            row.update(vad_results[j])
+            row.update(sb_results[j])
+            output_rows.append(row)
 
-    # -------------------------------
+        print(f"Processed {min(b + batch_size, len(chunk_tensors))}/{len(chunk_tensors)} chunks...")
+
     # Save CSV
-    # -------------------------------
     df = pd.DataFrame(output_rows)
     df.to_csv(output_file, index=False)
     print(f"Saved combined emotion scores per chunk to {output_file}")
     print(f"Output shape: {df.shape}")
     print(f"Columns: {list(df.columns)}")
-    
-    # Print summary statistics
+
     if 'predicted_emotion' in df.columns:
-        print(f"Emotion distribution:")
+        print("Emotion distribution:")
         print(df['predicted_emotion'].value_counts())
-    
+
     if 'confidence' in df.columns:
         print(f"Average confidence: {df['confidence'].mean():.3f}")
+
 
 # -------------------------------
 # CLI
 # -------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Chunked MSP-Dim + SpeechBrain emotion analysis")
+    parser = argparse.ArgumentParser(description="Chunked MSP-Dim + SpeechBrain emotion analysis (auto-batched)")
     parser.add_argument("input_file", type=str)
     parser.add_argument("output_file", type=str)
     parser.add_argument("--chunk_sec", type=float, default=5.0)
     parser.add_argument("--msp_model_path", type=str, default=None)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--batch_size", type=int, default=None, help="Automatically calculated if not provided")
     args = parser.parse_args()
 
-    main(args.input_file, args.output_file, args.chunk_sec, args.msp_model_path, args.device)
+    main(args.input_file, args.output_file, args.chunk_sec, args.msp_model_path, args.device, args.batch_size)
