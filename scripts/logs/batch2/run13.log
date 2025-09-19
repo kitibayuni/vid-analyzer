@@ -1,0 +1,12 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 13
+Started: Fri Sep 19 13:02:51 EDT 2025
+Input: ./../temp/quicky.mp4
+
+[2025-09-19 13:02:51] === INITIALIZATION ===
+[2025-09-19 13:02:51] FILE INFO: Input file - Size: 175508143 bytes (300.113333s duration)
+[2025-09-19 13:02:51] TIMING: Initialization completed in .114947939s
+[2025-09-19 13:02:51] === AUDIO TRACK PROCESSING START ===
+[2025-09-19 13:02:51] Found 1 audio stream(s)
+[2025-09-19 13:02:51] === Processing Audio Stream 0 ===
+[2025-09-19 13:02:51] Starting silence detection for stream 0

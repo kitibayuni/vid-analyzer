@@ -1,0 +1,98 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 12
+Started: Fri Sep 19 12:52:21 EDT 2025
+Input: ./../temp/quicky.mp4
+
+[2025-09-19 12:52:21] === INITIALIZATION ===
+[2025-09-19 12:52:21] FILE INFO: Input file - Size: 175508143 bytes (300.113333s duration)
+[2025-09-19 12:52:21] TIMING: Initialization completed in .402939454s
+[2025-09-19 12:52:21] === AUDIO TRACK PROCESSING START ===
+[2025-09-19 12:52:21] Found 1 audio stream(s)
+[2025-09-19 12:52:21] === Processing Audio Stream 0 ===
+[2025-09-19 12:52:21] Starting silence detection for stream 0
+[2025-09-19 12:52:23] TIMING: Silence detection (stream 0) completed in 1.783574292s
+[2025-09-19 12:52:23] Silence analysis: 3 segments, 26% of 300s total
+[2025-09-19 12:52:23] Extracting audio stream 0
+[2025-09-19 12:52:24] TIMING: Audio extraction (stream 0) completed in 1.270937894s
+[2025-09-19 12:52:24] FILE INFO: Extracted audio stream 0 - Size: 57602162 bytes (300.010667s duration)
+[2025-09-19 12:52:24] STORAGE: After audio extraction (stream 0) - Current: 412731953 bytes, Peak: 412731953 bytes
+[2025-09-19 12:52:24] Starting Demucs processing for stream 0
+[2025-09-19 12:53:08] TIMING: Demucs processing (stream 0) completed in 43.505597565s
+[2025-09-19 12:53:08] STORAGE: After Demucs (stream 0) - Current: 470332109 bytes, Peak: 470332109 bytes
+[2025-09-19 12:53:08] FILE INFO: Demucs output: quicky_audio0_vocals.wav - Size: 28800078 bytes (300.000000s duration)
+[2025-09-19 12:53:08] FILE INFO: Demucs output: quicky_audio0_nonvocals.wav - Size: 28800078 bytes (300.000000s duration)
+[2025-09-19 12:53:08] Processing quicky_audio0_vocals - creating variants and features
+[2025-09-19 12:53:10] TIMING: Audio variants creation (quicky_audio0_vocals) completed in 1.906791163s
+[2025-09-19 12:53:10] Starting vocal processing for quicky_audio0_vocals
+[2025-09-19 12:53:10] TIMING: Feature extraction (rms) completed in .250199566s
+[2025-09-19 12:53:11] TIMING: Feature extraction (zcr) completed in .207501231s
+[2025-09-19 12:53:25] TIMING: Feature extraction (pitch) completed in 14.825499747s
+[2025-09-19 12:53:27] TIMING: Feature extraction (spectral) completed in 1.405689576s
+[2025-09-19 12:53:28] TIMING: Feature extraction (formant) completed in .789761360s
+[2025-09-19 12:53:28] TIMING: Feature extraction (jitter) completed in .008553269s
+[2025-09-19 12:53:28] TIMING: CSV post-processing (quicky_audio0_vocals) completed in .667386409s
+[2025-09-19 12:53:28] Starting emotion processing for quicky_audio0_vocals
+[2025-09-19 12:54:51] TIMING: Emotion processing (quicky_audio0_vocals) completed in 82.663482898s
+[2025-09-19 12:54:51] Starting transcript processing for quicky_audio0_vocals
+[2025-09-19 12:55:18] TIMING: Transcript processing (quicky_audio0_vocals) completed in 26.766741630s
+[2025-09-19 12:55:18] TIMING: Complete vocal processing (quicky_audio0_vocals) completed in 127.696546516s
+[2025-09-19 12:55:18] TIMING: Complete processing (quicky_audio0_vocals) completed in 129.635099460s
+[2025-09-19 12:55:18] STORAGE: After processing quicky_audio0_vocals - Current: 553467841 bytes, Peak: 553467841 bytes
+[2025-09-19 12:55:18] Processing quicky_audio0_nonvocals - creating variants and features
+[2025-09-19 12:55:20] TIMING: Audio variants creation (quicky_audio0_nonvocals) completed in 1.814657266s
+[2025-09-19 12:55:20] Starting nonvocal processing for quicky_audio0_nonvocals
+[2025-09-19 12:55:20] TIMING: Feature extraction (rms) completed in .238784903s
+[2025-09-19 12:55:20] TIMING: Feature extraction (zcr) completed in .227584499s
+[2025-09-19 12:55:21] TIMING: Feature extraction (spectral) completed in 1.201593970s
+[2025-09-19 12:55:22] TIMING: Complete nonvocal processing (quicky_audio0_nonvocals) completed in 2.157228691s
+[2025-09-19 12:55:22] TIMING: Complete processing (quicky_audio0_nonvocals) completed in 4.002498024s
+[2025-09-19 12:55:22] STORAGE: After processing quicky_audio0_nonvocals - Current: 530488325 bytes, Peak: 553467841 bytes
+[2025-09-19 12:55:22] TIMING: Complete audio stream 0 processing completed in 180.896865295s
+[2025-09-19 12:55:22] TIMING: All audio processing completed in 181.015662761s
+[2025-09-19 12:55:22] === CSV MERGING START ===
+[2025-09-19 12:55:22] Merging CSVs for quicky_audio0_vocals
+[2025-09-19 12:55:23] TIMING: CSV merge (quicky_audio0_vocals) completed in 1.444500294s
+[2025-09-19 12:55:23] Merging CSVs for quicky_audio0_nonvocals
+[2025-09-19 12:55:24] TIMING: CSV merge (quicky_audio0_nonvocals) completed in .664053133s
+[2025-09-19 12:55:24] TIMING: All CSV merging completed in 2.134200383s
+[2025-09-19 12:55:24] STORAGE: After CSV merging - Current: 337215131 bytes, Peak: 553467841 bytes
+[2025-09-19 12:55:24] === VIDEO PROCESSING START ===
+[2025-09-19 12:55:24] Found 1 video stream(s)
+[2025-09-19 12:55:24] Processing Video Stream 0
+[2025-09-19 12:55:29] TIMING: Video encoding (stream 0) completed in 4.954680205s
+[2025-09-19 12:55:29] FILE INFO: Encoded video stream 0 - Size: 18316757 bytes (300.133333s duration)
+[2025-09-19 12:55:29] Starting DeepGaze processing for video stream 0
+[2025-09-19 12:56:31] Processing salience CSV for stream 0
+[2025-09-19 12:56:31] TIMING: Salience processing (stream 0) completed in .060443547s
+[2025-09-19 12:56:31] FILE INFO: Salience engagement: stream 0 - Size: 831237 bytes
+[2025-09-19 12:56:31] TIMING: DeepGaze processing (stream 0) completed in 61.445507476s
+[2025-09-19 12:56:31] TIMING: Complete video stream 0 processing completed in 66.513994921s
+[2025-09-19 12:56:31] STORAGE: After video processing (stream 0) - Current: 355531888 bytes, Peak: 553467841 bytes
+[2025-09-19 12:56:31] TIMING: All video processing completed in 66.681360047s
+[2025-09-19 12:56:31] === FINALIZATION START ===
+[2025-09-19 12:56:31] Available files for finalization: Vocals=0, Nonvocals=0, Video=1
+[2025-09-19 12:56:31] Selected files: vocals=./../temp/quicky_video0_salience_engagement.csv, nonvocals=NONE, video=NONE
+[2025-09-19 12:56:31] Attempting vocals-only finalization strategy
+[2025-09-19 12:56:31] TIMING: Vocals-only finalization completed in .022428627s
+[2025-09-19 12:56:31] FILE INFO: Finalized output (vocals-only) - Size: 6437731 bytes
+[2025-09-19 12:56:31] TIMING: Finalization process completed in .075170653s
+[2025-09-19 12:56:31] Starting GUI overlay generation
+[2025-09-19 12:56:31] Input: ./../temp/quicky.mp4, Data: ./../temp/quicky_finalized.csv, Output: ./../temp/quicky_data_overlay.mp4
+[2025-09-19 12:57:30] TIMING: GUI overlay generation completed in 58.678144071s
+[2025-09-19 12:57:30] FILE INFO: Final overlay video - Size: 146239285 bytes (300.033333s duration)
+[2025-09-19 12:57:30] === FINAL SUMMARY ===
+[2025-09-19 12:57:30] Total runtime: 309.240254429s
+[2025-09-19 12:57:30] Peak storage usage: 553467841 bytes
+[2025-09-19 12:57:30] STORAGE: Final - Current: 329016396 bytes, Peak: 553467841 bytes
+
+=== EXECUTION SUMMARY ===
+Script completed at: Fri Sep 19 12:57:30 EDT 2025
+Total execution time: 309.240254429s
+Peak storage usage: 553467841 bytes
+Input file: ./../temp/quicky.mp4
+Audio streams processed: 1
+Video streams processed: 1
+Finalization successful: true
+Output directory: ./../temp
+Final CSV: ./../temp/quicky_finalized.csv
+Final video: ./../temp/quicky_data_overlay.mp4
