@@ -1,0 +1,32 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 9
+Started: Fri Sep 19 00:55:15 EDT 2025
+Input: ./../temp/quicky.mp4
+
+[2025-09-19 00:55:15] === INITIALIZATION ===
+[2025-09-19 00:55:15] FILE INFO: Input file - Size: 175508143 bytes (300.113333s duration)
+[2025-09-19 00:55:15] TIMING: Initialization completed in .391325724s
+[2025-09-19 00:55:15] === AUDIO TRACK PROCESSING START ===
+[2025-09-19 00:55:15] Found 1 audio stream(s)
+[2025-09-19 00:55:15] === Processing Audio Stream 0 ===
+[2025-09-19 00:55:15] Starting silence detection for stream 0
+[2025-09-19 00:55:16] TIMING: Silence detection (stream 0) completed in 1.357981304s
+[2025-09-19 00:55:16] Silence analysis: 4 segments, 26% of 300s total
+[2025-09-19 00:55:16] Extracting audio stream 0
+[2025-09-19 00:55:18] TIMING: Audio extraction (stream 0) completed in 1.278190130s
+[2025-09-19 00:55:18] FILE INFO: Extracted audio stream 0 - Size: 57602162 bytes (300.010667s duration)
+[2025-09-19 00:55:18] STORAGE: After audio extraction (stream 0) - Current: 233110305 bytes, Peak: 233110305 bytes
+[2025-09-19 00:55:18] Starting Demucs processing for stream 0
+[2025-09-19 00:55:50] ERROR: Demucs processing failed for ./../temp/quicky_audio0.wav
+[2025-09-19 00:55:50] TIMING: All audio processing completed in 35.231917431s
+[2025-09-19 00:55:50] === CSV MERGING START ===
+[2025-09-19 00:55:50] No CSVs to merge for quicky_audio0_vocals
+[2025-09-19 00:55:50] No CSVs to merge for quicky_audio0_nonvocals
+[2025-09-19 00:55:50] TIMING: All CSV merging completed in .029045035s
+[2025-09-19 00:55:50] STORAGE: After CSV merging - Current: 233110305 bytes, Peak: 233110305 bytes
+[2025-09-19 00:55:50] === VIDEO PROCESSING START ===
+[2025-09-19 00:55:50] Found 1 video stream(s)
+[2025-09-19 00:55:50] Processing Video Stream 0
+[2025-09-19 00:55:55] TIMING: Video encoding (stream 0) completed in 4.904841292s
+[2025-09-19 00:55:55] FILE INFO: Encoded video stream 0 - Size: 18316757 bytes (300.133333s duration)
+[2025-09-19 00:55:55] Starting DeepGaze processing for video stream 0
