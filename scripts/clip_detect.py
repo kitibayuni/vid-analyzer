@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Engagement Clip Detection Script - Streamlined & Optimized
+Engagement Clip Detection Script - Streamlined & Optimized with Clippability Classification
 Analyzes CSV data to identify clippable moments based on engagement metrics.
 Optimized with automatic parallelization, chunking, and caching.
 """
@@ -115,9 +115,12 @@ def compute_engagement_metrics(df):
     # Engagement difference for crossover detection
     eng_diff = df['total_engag_1s_pct'] - df['total_engag_5s_pct']
     
-    # Sustained engagement score
+    # Sustained engagement score with diagnostic info
     sustained_scores = df['total_engag_10s_pct'] * 0.4 + df['total_engag_30s_pct'] * 0.6
     sustained_smooth = sustained_scores.rolling(window=5, center=True, min_periods=1).mean()
+    
+    print(f"  Sustained score range: {sustained_smooth.min():.2f} - {sustained_smooth.max():.2f}")
+    print(f"  Mean sustained score: {sustained_smooth.mean():.2f}")
     
     return engagement_scores, eng_diff, sustained_smooth
 
@@ -155,9 +158,76 @@ def find_crossovers_vectorized(eng_diff):
     print(f"Found {len(crossovers)} crossover points")
     return crossovers
 
+def calculate_dynamic_thresholds(spikes):
+    """Calculate dynamic classification thresholds based on spike distribution."""
+    if not spikes:
+        return {'integral': [5, 10], 'duration': [2, 5], 'peak_1s': [20, 40], 'peak_diff': [5, 15]}
+    
+    # Extract all values
+    integrals = [s['integral'] for s in spikes]
+    durations = [s['duration'] for s in spikes]
+    peak_1s_values = [s['peak_eng_1s'] for s in spikes]
+    peak_diffs = [s['peak_difference'] for s in spikes]
+    
+    # Calculate percentile-based thresholds for normalization
+    thresholds = {
+        'integral': [np.percentile(integrals, 50), np.percentile(integrals, 90)],
+        'duration': [np.percentile(durations, 50), np.percentile(durations, 90)],
+        'peak_1s': [np.percentile(peak_1s_values, 50), np.percentile(peak_1s_values, 90)],
+        'peak_diff': [np.percentile(peak_diffs, 50), np.percentile(peak_diffs, 90)]
+    }
+    
+    return thresholds
+
+def classify_clippability_dynamic(spike, thresholds):
+    """Classify spike clippability based on dynamic thresholds."""
+    # Normalize scores based on dynamic thresholds
+    integral_score = min(spike['integral'] / max(thresholds['integral'][1], 1), 1.0)
+    duration_score = min(spike['duration'] / max(thresholds['duration'][1], 1), 1.0)
+    peak_1s_score = min(spike['peak_eng_1s'] / max(thresholds['peak_1s'][1], 1), 1.0)
+    peak_diff_score = min(spike['peak_difference'] / max(thresholds['peak_diff'][1], 1), 1.0)
+    
+    # Weighted composite score
+    clippability_score = (
+        integral_score * 0.35 +      # Integral is most important
+        peak_1s_score * 0.25 +       # Peak engagement matters
+        duration_score * 0.20 +      # Duration consideration
+        peak_diff_score * 0.20       # Difference magnitude
+    )
+    
+    return clippability_score
+
+def assign_dynamic_classes(spikes):
+    """Assign classification classes based on score distribution."""
+    if not spikes:
+        return spikes
+    
+    scores = [s['clippability_score'] for s in spikes]
+    
+    # Use tertile-based classification for balanced distribution
+    if len(scores) >= 3:
+        high_threshold = np.percentile(scores, 67)  # Top third
+        medium_threshold = np.percentile(scores, 33)  # Middle third
+    else:
+        # Fallback for very few spikes
+        high_threshold = max(scores) * 0.8
+        medium_threshold = max(scores) * 0.5
+    
+    # Assign classes
+    for spike in spikes:
+        score = spike['clippability_score']
+        if score >= high_threshold:
+            spike['clippability_class'] = 'High'
+        elif score >= medium_threshold:
+            spike['clippability_class'] = 'Medium'
+        else:
+            spike['clippability_class'] = 'Low'
+    
+    return spikes
+
 def detect_spikes_optimized(df, eng_diff, engagement_scores, crossovers, 
                            min_integral=5.0, min_duration=1.0):
-    """Detect engagement spikes using crossover analysis."""
+    """Detect engagement spikes using crossover analysis with dynamic classification."""
     if len(crossovers) < 2:
         return []
     
@@ -203,7 +273,7 @@ def detect_spikes_optimized(df, eng_diff, engagement_scores, crossovers,
                 peak_local_idx = np.argmax(diff_slice)
                 peak_idx = start_idx + peak_local_idx
                 
-                spikes.append({
+                spike = {
                     'start_time': start_time,
                     'end_time': end_time,
                     'duration': duration,
@@ -216,10 +286,34 @@ def detect_spikes_optimized(df, eng_diff, engagement_scores, crossovers,
                     'padded_start_time': max(0, start_time - 2),
                     'padded_end_time': end_time + 3,
                     'type': 'crossover_spike'
-                })
+                }
+                
+                spikes.append(spike)
     
-    # Sort by integral
-    spikes.sort(key=lambda x: x['integral'], reverse=True)
+    if spikes:
+        print(f"Calculating dynamic classification thresholds...")
+        
+        # Calculate dynamic thresholds based on all detected spikes
+        thresholds = calculate_dynamic_thresholds(spikes)
+        
+        # Calculate clippability scores for all spikes
+        for spike in spikes:
+            spike['clippability_score'] = classify_clippability_dynamic(spike, thresholds)
+        
+        # Assign classification classes based on score distribution
+        spikes = assign_dynamic_classes(spikes)
+        
+        # Sort by clippability score first, then by integral
+        spikes.sort(key=lambda x: (x['clippability_score'], x['integral']), reverse=True)
+        
+        # Print classification summary
+        high_count = len([s for s in spikes if s['clippability_class'] == 'High'])
+        medium_count = len([s for s in spikes if s['clippability_class'] == 'Medium'])
+        low_count = len([s for s in spikes if s['clippability_class'] == 'Low'])
+        
+        print(f"Dynamic thresholds - Integral: {thresholds['integral']}, Duration: {thresholds['duration']}")
+        print(f"Classification: High={high_count}, Medium={medium_count}, Low={low_count}")
+    
     print(f"Detected {len(spikes)} spikes")
     return spikes
 
@@ -227,55 +321,119 @@ def detect_sustained_moments(df, sustained_smooth, duration_threshold=15, percen
     """Detect sustained high engagement periods."""
     print("Detecting sustained moments...")
     
-    threshold = np.percentile(sustained_smooth.dropna(), percentile)
+    # Calculate threshold and show diagnostic info
+    sustained_values = sustained_smooth.dropna()
+    if len(sustained_values) == 0:
+        print("Warning: No valid sustained engagement values found")
+        return []
+    
+    threshold = np.percentile(sustained_values, percentile)
     above_threshold = sustained_smooth > threshold
+    above_count = above_threshold.sum()
+    
+    print(f"  Sustained score threshold ({percentile}th percentile): {threshold:.2f}")
+    print(f"  Data points above threshold: {above_count:,} / {len(sustained_smooth):,} ({100*above_count/len(sustained_smooth):.1f}%)")
+    
+    if above_count == 0:
+        print("  No periods above threshold found")
+        return []
     
     # Find continuous periods
     diff = np.diff(np.concatenate(([False], above_threshold, [False])).astype(int))
     starts = np.where(diff == 1)[0]
     ends = np.where(diff == -1)[0] - 1
     
+    print(f"  Found {len(starts)} potential sustained periods")
+    
     moments = []
+    periods_too_short = 0
+    
     for start_idx, end_idx in zip(starts, ends):
+        if start_idx >= len(df) or end_idx >= len(df):
+            continue
+            
         start_time = df.iloc[start_idx]['time_sec']
         end_time = df.iloc[end_idx]['time_sec'] 
         duration = end_time - start_time
         
         if duration >= duration_threshold:
+            avg_10s = df['total_engag_10s_pct'].iloc[start_idx:end_idx+1].mean()
+            avg_30s = df['total_engag_30s_pct'].iloc[start_idx:end_idx+1].mean()
+            avg_sustained = sustained_smooth.iloc[start_idx:end_idx+1].mean()
+            
             moments.append({
                 'start_time': max(0, start_time - 5),
                 'end_time': end_time + 5,
                 'duration': duration,
-                'avg_engagement_10s': df['total_engag_10s_pct'].iloc[start_idx:end_idx+1].mean(),
-                'avg_engagement_30s': df['total_engag_30s_pct'].iloc[start_idx:end_idx+1].mean(),
-                'avg_sustained_score': sustained_smooth.iloc[start_idx:end_idx+1].mean(),
+                'raw_start_time': start_time,
+                'raw_end_time': end_time,
+                'avg_engagement_10s': avg_10s,
+                'avg_engagement_30s': avg_30s,
+                'avg_sustained_score': avg_sustained,
                 'type': 'sustained'
             })
+        else:
+            periods_too_short += 1
+    
+    if periods_too_short > 0:
+        print(f"  Filtered out {periods_too_short} periods shorter than {duration_threshold}s")
+    
+    if moments:
+        durations = [m['duration'] for m in moments]
+        avg_10s_values = [m['avg_engagement_10s'] for m in moments]
+        print(f"  Duration range: {min(durations):.1f}s - {max(durations):.1f}s")
+        print(f"  Avg 10s engagement range: {min(avg_10s_values):.1f}% - {max(avg_10s_values):.1f}%")
     
     print(f"Detected {len(moments)} sustained periods")
     return moments
 
 def create_outputs(spikes, sustained_moments, output_prefix):
-    """Create text and CSV output files."""
+    """Create text and CSV output files with clippability classification."""
     # Text file
     txt_path = f"{output_prefix}_clips.txt"
     with open(txt_path, 'w') as f:
         f.write("ENGAGEMENT-BASED CLIPPABLE MOMENTS\n" + "="*50 + "\n\n")
         
-        f.write("CROSSOVER-BASED SPIKES (Ranked by Integral)\n" + "-"*45 + "\n")
-        for i, spike in enumerate(spikes, 1):
-            f.write(f"Spike #{i}\n")
+        # Group spikes by clippability class
+        high_clips = [s for s in spikes if s['clippability_class'] == 'High']
+        medium_clips = [s for s in spikes if s['clippability_class'] == 'Medium']
+        low_clips = [s for s in spikes if s['clippability_class'] == 'Low']
+        
+        f.write(f"HIGH CLIPPABILITY SPIKES ({len(high_clips)} clips)\n" + "-"*40 + "\n")
+        for i, spike in enumerate(high_clips, 1):
+            f.write(f"High Clip #{i} (Score: {spike['clippability_score']:.2f})\n")
             f.write(f"  Range: {spike['start_time']//60:02.0f}:{spike['start_time']%60:02.0f} - {spike['end_time']//60:02.0f}:{spike['end_time']%60:02.0f}\n")
             f.write(f"  Padded: {spike['padded_start_time']//60:02.0f}:{spike['padded_start_time']%60:02.0f} - {spike['padded_end_time']//60:02.0f}:{spike['padded_end_time']%60:02.0f}\n")
             f.write(f"  Duration: {spike['duration']:.1f}s, Integral: {spike['integral']:.2f}\n")
             f.write(f"  Peak: 1s={spike['peak_eng_1s']:.1f}%, 5s={spike['peak_eng_5s']:.1f}%\n\n")
         
-        f.write("\nSUSTAINED HIGH ENGAGEMENT\n" + "-"*25 + "\n")
-        for i, moment in enumerate(sustained_moments, 1):
-            f.write(f"Period #{i}\n")
-            f.write(f"  Range: {moment['start_time']//60:02.0f}:{moment['start_time']%60:02.0f} - {moment['end_time']//60:02.0f}:{moment['end_time']%60:02.0f}\n")
-            f.write(f"  Duration: {moment['duration']:.1f}s\n")
-            f.write(f"  Avg: 10s={moment['avg_engagement_10s']:.1f}%, 30s={moment['avg_engagement_30s']:.1f}%\n\n")
+        f.write(f"\nMEDIUM CLIPPABILITY SPIKES ({len(medium_clips)} clips)\n" + "-"*42 + "\n")
+        for i, spike in enumerate(medium_clips, 1):
+            f.write(f"Medium Clip #{i} (Score: {spike['clippability_score']:.2f})\n")
+            f.write(f"  Range: {spike['start_time']//60:02.0f}:{spike['start_time']%60:02.0f} - {spike['end_time']//60:02.0f}:{spike['end_time']%60:02.0f}\n")
+            f.write(f"  Padded: {spike['padded_start_time']//60:02.0f}:{spike['padded_start_time']%60:02.0f} - {spike['padded_end_time']//60:02.0f}:{spike['padded_end_time']%60:02.0f}\n")
+            f.write(f"  Duration: {spike['duration']:.1f}s, Integral: {spike['integral']:.2f}\n")
+            f.write(f"  Peak: 1s={spike['peak_eng_1s']:.1f}%, 5s={spike['peak_eng_5s']:.1f}%\n\n")
+        
+        f.write(f"\nLOW CLIPPABILITY SPIKES ({len(low_clips)} clips)\n" + "-"*39 + "\n")
+        for i, spike in enumerate(low_clips, 1):
+            f.write(f"Low Clip #{i} (Score: {spike['clippability_score']:.2f})\n")
+            f.write(f"  Range: {spike['start_time']//60:02.0f}:{spike['start_time']%60:02.0f} - {spike['end_time']//60:02.0f}:{spike['end_time']%60:02.0f}\n")
+            f.write(f"  Padded: {spike['padded_start_time']//60:02.0f}:{spike['padded_start_time']%60:02.0f} - {spike['padded_end_time']//60:02.0f}:{spike['padded_end_time']%60:02.0f}\n")
+            f.write(f"  Duration: {spike['duration']:.1f}s, Integral: {spike['integral']:.2f}\n")
+            f.write(f"  Peak: 1s={spike['peak_eng_1s']:.1f}%, 5s={spike['peak_eng_5s']:.1f}%\n\n")
+        
+        f.write("\nSUSTAINED HIGH ENGAGEMENT PERIODS\n" + "-"*35 + "\n")
+        if not sustained_moments:
+            f.write("No sustained periods detected with current thresholds.\n\n")
+        else:
+            for i, moment in enumerate(sustained_moments, 1):
+                f.write(f"Sustained Period #{i}\n")
+                f.write(f"  Range: {moment['raw_start_time']//60:02.0f}:{moment['raw_start_time']%60:02.0f} - {moment['raw_end_time']//60:02.0f}:{moment['raw_end_time']%60:02.0f}\n")
+                f.write(f"  Padded: {moment['start_time']//60:02.0f}:{moment['start_time']%60:02.0f} - {moment['end_time']//60:02.0f}:{moment['end_time']%60:02.0f}\n")
+                f.write(f"  Duration: {moment['duration']:.1f}s\n")
+                f.write(f"  Avg Engagement: 10s={moment['avg_engagement_10s']:.1f}%, 30s={moment['avg_engagement_30s']:.1f}%\n")
+                f.write(f"  Sustained Score: {moment['avg_sustained_score']:.2f}\n\n")
     
     # CSV file
     csv_path = f"{output_prefix}_clips.csv"
@@ -283,7 +441,8 @@ def create_outputs(spikes, sustained_moments, output_prefix):
     
     for i, spike in enumerate(spikes, 1):
         all_clips.append({
-            'rank': i, 'type': 'spike', 'start_time': spike['padded_start_time'],
+            'rank': i, 'type': 'spike', 'clippability_class': spike['clippability_class'],
+            'clippability_score': spike['clippability_score'], 'start_time': spike['padded_start_time'],
             'end_time': spike['padded_end_time'], 'duration': spike['padded_end_time'] - spike['padded_start_time'],
             'integral': spike['integral'], 'peak_eng_1s': spike['peak_eng_1s'],
             'peak_eng_5s': spike['peak_eng_5s'], 'engagement_score': spike['engagement_score']
@@ -291,7 +450,8 @@ def create_outputs(spikes, sustained_moments, output_prefix):
     
     for i, moment in enumerate(sustained_moments, 1):
         all_clips.append({
-            'rank': len(spikes) + i, 'type': 'sustained', 'start_time': moment['start_time'],
+            'rank': len(spikes) + i, 'type': 'sustained', 'clippability_class': 'N/A',
+            'clippability_score': None, 'start_time': moment['start_time'],
             'end_time': moment['end_time'], 'duration': moment['duration'],
             'avg_engagement_10s': moment['avg_engagement_10s'], 'avg_engagement_30s': moment['avg_engagement_30s'],
             'sustained_score': moment['avg_sustained_score']
@@ -301,7 +461,7 @@ def create_outputs(spikes, sustained_moments, output_prefix):
     return txt_path, csv_path
 
 def create_visualization(df, eng_diff, spikes, sustained_moments, output_prefix):
-    """Create adaptive visualization based on dataset size."""
+    """Create adaptive visualization with clippability classification."""
     data_size = len(df)
     
     # Adaptive downsampling
@@ -324,20 +484,36 @@ def create_visualization(df, eng_diff, spikes, sustained_moments, output_prefix)
     ax1.plot(time_vals, df_plot['total_engag_10s_pct'], label='10s', color='green', alpha=0.7)
     ax1.plot(time_vals, df_plot['total_engag_30s_pct'], label='30s', color='purple', alpha=0.7)
     
-    # Highlight spikes
-    colors = ['darkred', 'red', 'indianred', 'lightcoral', 'mistyrose']
-    for i, spike in enumerate(spikes[:5]):
-        color = colors[min(i, len(colors)-1)]
-        ax1.axvspan(spike['start_time'], spike['end_time'], alpha=0.25, color=color,
-                   label=f'Spike {i+1}' if i < 3 else None)
+    # Classify and highlight spikes by clippability
+    high_clips = [s for s in spikes if s['clippability_class'] == 'High']
+    medium_clips = [s for s in spikes if s['clippability_class'] == 'Medium']
+    low_clips = [s for s in spikes if s['clippability_class'] == 'Low']
+    
+    # Add legend flags
+    high_added = medium_added = low_added = False
+    
+    for spike in high_clips:
+        ax1.axvspan(spike['start_time'], spike['end_time'], alpha=0.4, color='darkred',
+                   label='High Clippability' if not high_added else None)
+        high_added = True
+    
+    for spike in medium_clips:
+        ax1.axvspan(spike['start_time'], spike['end_time'], alpha=0.3, color='orange',
+                   label='Medium Clippability' if not medium_added else None)
+        medium_added = True
+    
+    for spike in low_clips:
+        ax1.axvspan(spike['start_time'], spike['end_time'], alpha=0.2, color='yellow',
+                   label='Low Clippability' if not low_added else None)
+        low_added = True
     
     # Highlight sustained periods
     for i, moment in enumerate(sustained_moments):
-        ax1.axvspan(moment['start_time'], moment['end_time'], alpha=0.15, color='yellow',
+        ax1.axvspan(moment['start_time'], moment['end_time'], alpha=0.15, color='lightblue',
                    label='Sustained' if i == 0 else None)
     
     ax1.set_ylabel("Engagement (%)")
-    ax1.set_title("Engagement Analysis with Detected Clips")
+    ax1.set_title("Engagement Analysis with Clippability Classification")
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
@@ -349,14 +525,19 @@ def create_visualization(df, eng_diff, spikes, sustained_moments, output_prefix)
     ax2.fill_between(time_vals, eng_diff_plot, 0, where=(eng_diff_plot < 0), 
                     alpha=0.2, color='red', label='Negative')
     
-    # Mark spike peaks
-    for i, spike in enumerate(spikes[:3]):
+    # Mark spike peaks by clippability
+    colors = {'High': 'darkred', 'Medium': 'orange', 'Low': 'gold'}
+    sizes = {'High': 80, 'Medium': 60, 'Low': 40}
+    
+    for spike in spikes[:10]:  # Show top 10 peaks
+        color = colors[spike['clippability_class']]
+        size = sizes[spike['clippability_class']]
         ax2.scatter(spike['peak_time'], spike['peak_difference'], 
-                   color=colors[i], s=50, zorder=5)
+                   color=color, s=size, zorder=5, alpha=0.8)
     
     ax2.set_xlabel("Time (seconds)")
     ax2.set_ylabel("Difference (%)")
-    ax2.set_title("Engagement Difference Analysis")
+    ax2.set_title("Engagement Difference Analysis with Peak Classifications")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
@@ -405,7 +586,7 @@ def analyze_engagement(df, min_integral=5.0, min_duration=1.0, sustained_duratio
     return result
 
 def main():
-    parser = argparse.ArgumentParser(description='Detect clippable engagement moments')
+    parser = argparse.ArgumentParser(description='Detect clippable engagement moments with clippability classification')
     parser.add_argument('input_csv', help='Input CSV file')
     parser.add_argument('-o', '--output', help='Output prefix')
     parser.add_argument('--min-integral', type=float, default=5.0, help='Min integral threshold')
@@ -461,12 +642,32 @@ def main():
     
     total_time = time.time() - start_time
     
+    # Classification summary
+    if result['spikes']:
+        high_clips = [s for s in result['spikes'] if s['clippability_class'] == 'High']
+        medium_clips = [s for s in result['spikes'] if s['clippability_class'] == 'Medium']
+        low_clips = [s for s in result['spikes'] if s['clippability_class'] == 'Low']
+        
+        # Show score ranges for each class
+        if high_clips:
+            high_scores = [s['clippability_score'] for s in high_clips]
+            print(f"High Quality Clips ({len(high_clips)}): Score range {min(high_scores):.3f} - {max(high_scores):.3f}")
+        if medium_clips:
+            medium_scores = [s['clippability_score'] for s in medium_clips]
+            print(f"Medium Quality Clips ({len(medium_clips)}): Score range {min(medium_scores):.3f} - {max(medium_scores):.3f}")
+        if low_clips:
+            low_scores = [s['clippability_score'] for s in low_clips]
+            print(f"Low Quality Clips ({len(low_clips)}): Score range {min(low_scores):.3f} - {max(low_scores):.3f}")
+    else:
+        print("No spikes detected")
+        high_clips = medium_clips = low_clips = []
+    
     # Summary
     print(f"\n{'='*50}")
     print(f"Dataset: {len(df):,} rows processed in {total_time:.2f}s")
     print(f"Rate: {len(df)/total_time:,.0f} rows/second")
-    print(f"Spikes: {len(result['spikes'])}")
-    print(f"Sustained: {len(result['sustained_moments'])}")
+    print(f"Clips by Quality: High={len(high_clips)}, Medium={len(medium_clips)}, Low={len(low_clips)}")
+    print(f"Sustained Periods: {len(result['sustained_moments'])}")
     print(f"Files: {txt_file}, {csv_file}, {plot_file}")
     
     del df
