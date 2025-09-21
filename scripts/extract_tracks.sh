@@ -1,7 +1,36 @@
 #!/bin/bash
-# usage: ./extract_tracks.sh input.mp4
+# usage: ./extract_tracks.sh input.mp4 [--gui-overlay]
 # requires: ffmpeg, ffprobe, ./perform_demucs.sh, ./formants_process, ./rms_energy_process, ./pitch_process, ./process_transcript.py
 # requires: ./pre-process_emotions, ./process_emotion.py, ./spectrals_process, ./salience_process, ./transcript_process
+# requires: python clip_detect.py (for clip detection)
+
+# --- Parse command line arguments ---
+INPUT_FILE=""
+ENABLE_GUI_OVERLAY=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --gui-overlay)
+            ENABLE_GUI_OVERLAY=true
+            shift
+            ;;
+        -*)
+            echo "Unknown option $1"
+            echo "Usage: $0 <input_video> [--gui-overlay]"
+            exit 1
+            ;;
+        *)
+            if [ -z "$INPUT_FILE" ]; then
+                INPUT_FILE="$1"
+            else
+                echo "ERROR: Multiple input files specified"
+                echo "Usage: $0 <input_video> [--gui-overlay]"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 
 # --- Logging setup ---
 setup_logging() {
@@ -17,6 +46,7 @@ setup_logging() {
     echo "Run: $run_counter" >> "$LOG_FILE"
     echo "Started: $SCRIPT_START_DATE" >> "$LOG_FILE"
     echo "Input: $INPUT" >> "$LOG_FILE"
+    echo "GUI Overlay: $ENABLE_GUI_OVERLAY" >> "$LOG_FILE"
     echo "" >> "$LOG_FILE"
 }
 
@@ -102,7 +132,7 @@ trap 'cleanup_temp_files "${BASENAME}_*_16k_16bit.wav"; cleanup_temp_files "${BA
 # --- Source virtual environment ---
 source venv/bin/activate
 
-ARG="$1"
+ARG="$INPUT_FILE"
 INPUT="$(dirname "$0")/$ARG"
 BASENAME=$(basename "$INPUT" | sed 's/\.[^.]*$//')
 OUTDIR="$(dirname "$0")/../temp"
@@ -113,6 +143,7 @@ setup_logging
 
 echo "=== Media Track Extractor - Enhanced with Differentiated Processing + Merging ==="
 echo "Script started at: $SCRIPT_START_DATE"
+echo "GUI Overlay enabled: $ENABLE_GUI_OVERLAY"
 echo "Logging to: $LOG_FILE"
 echo ""
 
@@ -125,7 +156,7 @@ validate_dependencies
 if [ -z "$INPUT" ]; then
     log_message "ERROR: No input file provided!"
     echo "ERROR: No input file provided!"
-    echo "Usage: $0 <input_video>"
+    echo "Usage: $0 <input_video> [--gui-overlay]"
     exit 1
 fi
 
@@ -555,7 +586,7 @@ fi
 log_timing "All video processing" $video_start
 
 echo ""
-echo "=== ROBUST FINALIZE + GUI OVERLAY ==="
+echo "=== ROBUST FINALIZE + CLIP DETECTION + GUI OVERLAY ==="
 log_message "=== FINALIZATION START ==="
 finalize_start=$(date +%s.%N)
 
@@ -783,11 +814,50 @@ fi
 
 log_timing "Finalization process" $finalize_start
 
-# --- GUI Overlay generation (only if finalization succeeded) ---
+# --- CLIP DETECTION (only if finalization succeeded) ---
+CLIP_SUCCESS=false
+CLIP_OUT=""
+
 if [ "$FINALIZE_SUCCESS" = true ] && [ -f "$FINALIZED_OUT" ]; then
+    clip_start=$(date +%s.%N)
+    echo ""
+    echo "=== CLIP DETECTION ==="
+    echo "Running clip detection on finalized data..."
+    log_message "Starting clip detection on $FINALIZED_OUT"
+    
+    CLIP_OUT="$OUTDIR/${BASENAME}_clips.csv"
+    
+    if python clip_detect.py "$FINALIZED_OUT" \
+        --output "$CLIP_OUT" \
+        --min-integral \
+        --min-duration 5 \
+        --sustained-threshold 80 \
+        2>/dev/null; then
+        if [ -f "$CLIP_OUT" ]; then
+            log_timing "Clip detection" $clip_start
+            log_file_info "$CLIP_OUT" "Clip detection output"
+            echo "✓ Clip detection complete: $CLIP_OUT"
+            CLIP_SUCCESS=true
+        else
+            log_message "ERROR: Clip detection script ran but no output file was created"
+            echo "✗ Clip detection script ran but no output file was created"
+        fi
+    else
+        log_message "ERROR: Clip detection failed"
+        echo "✗ Clip detection failed"
+        echo "  Make sure clip_detect.py exists and is executable"
+    fi
+else
+    log_message "Skipping clip detection (finalization failed or no data)"
+    echo "⚠ Skipping clip detection (finalization failed or no data)"
+fi
+
+# --- GUI Overlay generation (only if finalization succeeded AND --gui-overlay flag is set) ---
+if [ "$FINALIZE_SUCCESS" = true ] && [ -f "$FINALIZED_OUT" ] && [ "$ENABLE_GUI_OVERLAY" = true ]; then
     overlay_start=$(date +%s.%N)
     OVERLAY_OUT="$(dirname "$INPUT")/${BASENAME}_data_overlay.mp4"
     echo ""
+    echo "=== GUI OVERLAY GENERATION ==="
     echo "Running GUI overlay generation..."
     echo "  Input video: $INPUT"
     echo "  Finalized data: $FINALIZED_OUT"
@@ -805,6 +875,9 @@ if [ "$FINALIZE_SUCCESS" = true ] && [ -f "$FINALIZED_OUT" ]; then
         echo "✗ GUI overlay generation failed"
         echo "  Finalized data is still available at: $FINALIZED_OUT"
     fi
+elif [ "$FINALIZE_SUCCESS" = true ] && [ "$ENABLE_GUI_OVERLAY" = false ]; then
+    log_message "Skipping GUI overlay generation (not requested via --gui-overlay flag)"
+    echo "⚠ Skipping GUI overlay generation (use --gui-overlay flag to enable)"
 else
     log_message "Skipping GUI overlay generation (finalization failed or no data)"
     echo "⚠ Skipping GUI overlay generation (finalization failed or no data)"
@@ -866,15 +939,28 @@ else
     echo "  - No video streams detected"
 fi
 
-# --- Show finalization results ---
+# --- Show finalization and clip detection results ---
 echo ""
 if [ -f "$FINALIZED_OUT" ]; then
     echo "✓ Final combined data: $(basename "$FINALIZED_OUT")"
-    if [ -f "$(dirname "$INPUT")/${BASENAME}_data_overlay.mp4" ]; then
-        echo "✓ Data overlay video: ${BASENAME}_data_overlay.mp4"
-    fi
 else
     echo "✗ No finalized combined data generated"
+fi
+
+if [ "$CLIP_SUCCESS" = true ] && [ -f "$CLIP_OUT" ]; then
+    echo "✓ Clip detection results: $(basename "$CLIP_OUT")"
+else
+    echo "✗ No clip detection results generated"
+fi
+
+if [ "$ENABLE_GUI_OVERLAY" = true ]; then
+    if [ -f "$(dirname "$INPUT")/${BASENAME}_data_overlay.mp4" ]; then
+        echo "✓ Data overlay video: ${BASENAME}_data_overlay.mp4"
+    else
+        echo "✗ Data overlay video not generated"
+    fi
+else
+    echo "⚠ Data overlay video skipped (use --gui-overlay to enable)"
 fi
 
 # --- Write final summary to log ---
@@ -888,9 +974,14 @@ fi
     echo "Audio streams processed: $NUM_AUDIO_STREAMS"
     echo "Video streams processed: $NUM_VIDEO_STREAMS"
     echo "Finalization successful: $FINALIZE_SUCCESS"
+    echo "Clip detection successful: $CLIP_SUCCESS"
+    echo "GUI overlay enabled: $ENABLE_GUI_OVERLAY"
     echo "Output directory: $OUTDIR"
     if [ -f "$FINALIZED_OUT" ]; then
         echo "Final CSV: $FINALIZED_OUT"
+    fi
+    if [ -f "$CLIP_OUT" ]; then
+        echo "Clips CSV: $CLIP_OUT"
     fi
     if [ -f "$(dirname "$INPUT")/${BASENAME}_data_overlay.mp4" ]; then
         echo "Final video: $(dirname "$INPUT")/${BASENAME}_data_overlay.mp4"

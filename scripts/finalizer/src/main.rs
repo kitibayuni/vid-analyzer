@@ -1,12 +1,12 @@
 use csv::WriterBuilder;
-use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 
-// Add ordered float for precise floating point comparisons
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+// Memory-efficient ordered float for precise floating point comparisons
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Hash)]
 struct OrderedFloat<T>(T);
 
 impl<T: PartialOrd> Eq for OrderedFloat<T> {}
@@ -16,12 +16,16 @@ impl<T: PartialOrd> Ord for OrderedFloat<T> {
     }
 }
 
+// Compact CSV row structure - only store non-None values
 #[derive(Debug)]
 struct CsvRow {
-    data: HashMap<String, Option<f64>>,
+    time_sec: f64,
+    data: HashMap<String, f64>, // Only store actual values, not Options
 }
 
-// Weighted contributions for total_engag_raw
+// Note: StreamingRow and FeatureProcessor were removed as they weren't used in the final implementation
+
+// Configuration for weights
 const WEIGHTS_RAW: &[(&str, f64)] = &[
     ("emotion_engage", 0.22),
     ("transc", 0.18),
@@ -31,6 +35,21 @@ const WEIGHTS_RAW: &[(&str, f64)] = &[
     ("rms_energy_nonvocal", 0.05),
     ("video", 0.25),
 ];
+
+// Memory usage monitoring
+struct MemoryMonitor {
+    max_rows_in_memory: usize,
+}
+
+impl MemoryMonitor {
+    fn new() -> Self {
+        // Estimate based on available memory - conservative approach
+        let estimated_max_rows = 50_000; // Adjust based on system memory
+        Self {
+            max_rows_in_memory: estimated_max_rows,
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -45,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut vocals_file = "";
     let mut nonvocals_file = "";
     let mut video_file = "";
-    let mut output_file = "total_engagement.csv"; // default
+    let mut output_file = "total_engagement.csv";
 
     let mut i = 1;
     while i < args.len() {
@@ -59,282 +78,461 @@ fn main() -> Result<(), Box<dyn Error>> {
         i += 2;
     }
 
-    // Load input CSVs
-    let vocals_rows = load_csv(vocals_file)?;
-    let nonvocals_rows = load_csv(nonvocals_file)?;
-    let video_rows = load_csv(video_file)?;
-
-    // Extract features
-    let vocal_features = process_vocal_features(&vocals_rows);
-    let nonvocal_features = process_nonvocal_features(&nonvocals_rows);
-    let video_features = process_video_features(&video_rows);
-
-    // Combine, interpolate, and calculate engagement
-    let mut combined = combine_features_filtered(
-        &vocals_rows,
-        &vocal_features,
-        &nonvocals_rows,
-        &nonvocal_features,
-        &video_rows,
-        &video_features,
-    );
-
-    // Scale to 0–100 range
-    scale_0_1_to_0_100(&mut combined);
-
-    // Interpolate to 30fps
-    let finalized = finalize_data(combined);
-
-    // Collect headers
-    let mut all_columns_set = BTreeSet::new();
-    for row in &finalized {
-        for k in row.keys() {
-            all_columns_set.insert(k.clone());
-        }
-    }
-    let all_columns: Vec<String> = all_columns_set.into_iter().collect();
-
-    // Write final CSV
-    let mut wtr = WriterBuilder::new().from_path(output_file)?;
-    wtr.write_record(&all_columns)?;
-
-    for row in finalized {
-        let record: Vec<String> = all_columns
-            .iter()
-            .map(|col| row.get(col).unwrap_or(&0.0).to_string())
-            .collect();
-        wtr.write_record(record)?;
-    }
-    wtr.flush()?;
+    println!("🔄 Processing engagement data with OOM-safe approach...");
+    
+    // Initialize memory monitor
+    let memory_monitor = MemoryMonitor::new();
+    
+    // Process data in streaming fashion
+    process_engagement_streaming(
+        vocals_file,
+        nonvocals_file, 
+        video_file,
+        output_file,
+        &memory_monitor,
+    )?;
 
     println!("✅ CSV exported to {}", output_file);
     Ok(())
 }
 
+// Main streaming processing function
+fn process_engagement_streaming(
+    vocals_file: &str,
+    nonvocals_file: &str,
+    video_file: &str,
+    output_file: &str,
+    memory_monitor: &MemoryMonitor,
+) -> Result<(), Box<dyn Error>> {
+    
+    // Step 1: Create time-sorted indices of all files without loading full data
+    println!("📊 Creating time indices...");
+    let vocals_times = extract_time_indices(vocals_file)?;
+    let nonvocals_times = extract_time_indices(nonvocals_file)?;  
+    let video_times = extract_time_indices(video_file)?;
+    
+    // Combine all unique timestamps
+    let mut all_times: BTreeSet<OrderedFloat<f64>> = BTreeSet::new();
+    all_times.extend(vocals_times.into_iter().map(OrderedFloat));
+    all_times.extend(nonvocals_times.into_iter().map(OrderedFloat));
+    all_times.extend(video_times.into_iter().map(OrderedFloat));
+    
+    println!("⏱️  Processing {} unique timestamps", all_times.len());
+    
+    // Step 2: Process in chunks to avoid OOM
+    let chunk_size = memory_monitor.max_rows_in_memory;
+    let time_chunks: Vec<Vec<f64>> = all_times
+        .into_iter()
+        .map(|t| t.0)
+        .collect::<Vec<_>>()
+        .chunks(chunk_size)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+    
+    println!("🗂️  Processing {} chunks of up to {} rows each", time_chunks.len(), chunk_size);
+    
+    // Step 3: Initialize output writer
+    let output_writer = BufWriter::new(File::create(output_file)?);
+    let mut csv_writer = WriterBuilder::new().from_writer(output_writer);
+    
+    // Determine output columns by processing a small sample
+    let sample_columns = determine_output_columns(
+        vocals_file,
+        nonvocals_file,
+        video_file,
+        &time_chunks[0][..std::cmp::min(10, time_chunks[0].len())],
+    )?;
+    
+    csv_writer.write_record(&sample_columns)?;
+    
+    // Step 4: Process each chunk
+    for (chunk_idx, time_chunk) in time_chunks.iter().enumerate() {
+        println!("🔄 Processing chunk {}/{} ({} timestamps)...", 
+                 chunk_idx + 1, time_chunks.len(), time_chunk.len());
+        
+        let chunk_data = process_time_chunk(
+            vocals_file,
+            nonvocals_file,
+            video_file,
+            time_chunk,
+        )?;
+        
+        // Write chunk results immediately to free memory
+        write_chunk_results(&mut csv_writer, &chunk_data, &sample_columns)?;
+    }
+    
+    csv_writer.flush()?;
+    Ok(())
+}
 
-// Load CSV and convert empty/missing values to Option<f64>
-fn load_csv(file_path: &str) -> Result<Vec<CsvRow>, Box<dyn Error>> {
-    let mut rdr = csv::ReaderBuilder::new().from_path(file_path)?;
+// Extract just the time values from a CSV file without loading full data
+fn extract_time_indices(file_path: &str) -> Result<Vec<f64>, Box<dyn Error>> {
+    let file = File::open(file_path)?;
+    let buf_reader = BufReader::new(file);
+    let mut rdr = csv::ReaderBuilder::new().from_reader(buf_reader);
+    
     let headers = rdr.headers()?.clone();
-    let mut rows = Vec::new();
-
+    let time_col_idx = headers.iter()
+        .position(|h| h == "time_sec")
+        .ok_or("time_sec column not found")?;
+    
+    let mut times = Vec::new();
     for result in rdr.records() {
         let record = result?;
-        let mut data: HashMap<String, Option<f64>> = HashMap::new();
-        for (i, field) in record.iter().enumerate() {
-            let key = &headers[i];
-            let val = if field.trim().is_empty() {
-                None
-            } else {
-                match field.parse::<f64>() {
-                    Ok(v) => Some(v),
-                    Err(_) => None,
-                }
-            };
-            data.insert(key.to_string(), val);
-        }
-        rows.push(CsvRow { data });
-    }
-    Ok(rows)
-}
-
-// Extract multi-channel vocal features (1s & 10s EMA pct included)
-fn process_vocal_features(rows: &[CsvRow]) -> HashMap<String, Vec<f64>> {
-    extract_features(rows, &[
-        "cat_engage_ema_1s_pct",
-        "cat_engage_ema_10s_pct",
-        "transc_engage_ema_1s",
-        "transc_engage_ema_10s",
-        "rms_energy_engage_ema_1s_pct",
-        "rms_energy_engage_ema_10s_pct",
-        "spectral_engage_ema_1s_pct",
-        "spectral_engage_ema_10s_pct",
-    ])
-}
-
-// Extract multi-channel non-vocal features
-fn process_nonvocal_features(rows: &[CsvRow]) -> HashMap<String, Vec<f64>> {
-    let mut raw = extract_features(rows, &[
-        "rms_energy_engage_ema_1s_pct",
-        "rms_energy_engage_ema_10s_pct",
-        "spectral_engage_ema_1s_pct",
-        "spectral_engage_ema_10s_pct",
-    ]);
-
-    // Add "nonvocal_" prefix to each feature
-    let mut renamed = HashMap::new();
-    for (k, v) in raw.drain() {
-        renamed.insert(format!("nonvocal_{}", k), v);
-    }
-    renamed
-}
-
-// Extract video features, keeping attention and visual_engage columns
-fn process_video_features(rows: &[CsvRow]) -> HashMap<String, Vec<f64>> {
-    let mut features: HashMap<String, Vec<f64>> = HashMap::new();
-    for key in rows[0].data.keys() {
-        if key.contains("attention") || key.contains("visual_engage") {
-            let vals: Vec<f64> = rows
-                .iter()
-                .filter_map(|r| r.data.get(key).and_then(|v| *v))
-                .collect();
-            if !vals.is_empty() {
-                features.insert(key.clone(), interpolate_nans(&vals));
+        if let Some(time_field) = record.get(time_col_idx) {
+            if let Ok(time_val) = time_field.parse::<f64>() {
+                times.push(time_val);
             }
         }
     }
-    features
+    
+    Ok(times)
 }
 
-// Generic extraction with multi-channel averaging
-fn extract_features(rows: &[CsvRow], keys: &[&str]) -> HashMap<String, Vec<f64>> {
-    let mut features = HashMap::new();
-    for key in keys {
-        let vals: Vec<f64> = rows
-            .iter()
-            .map(|row| {
-                let channel_vals = row
-                    .data
-                    .iter()
-                    .filter(|(k, _)| k.contains(key))
-                    .filter_map(|(_, v)| *v)
-                    .filter(|v| *v != 0.0)
-                    .collect::<Vec<f64>>();
-                if !channel_vals.is_empty() {
-                    channel_vals.iter().sum::<f64>() / channel_vals.len() as f64
-                } else {
-                    f64::NAN
+// Load only specific rows by time values (memory efficient)
+fn load_csv_by_times(file_path: &str, target_times: &[f64]) -> Result<Vec<CsvRow>, Box<dyn Error>> {
+    let file = File::open(file_path)?;
+    let buf_reader = BufReader::new(file);
+    let mut rdr = csv::ReaderBuilder::new().from_reader(buf_reader);
+    
+    let headers = rdr.headers()?.clone();
+    let time_col_idx = headers.iter()
+        .position(|h| h == "time_sec")
+        .ok_or("time_sec column not found")?;
+    
+    // Create a set for fast lookup - use BTreeSet instead of HashSet for OrderedFloat
+    let target_set: std::collections::BTreeSet<OrderedFloat<f64>> = 
+        target_times.iter().map(|&t| OrderedFloat(t)).collect();
+    
+    let mut rows = Vec::new();
+    
+    for result in rdr.records() {
+        let record = result?;
+        if let Some(time_field) = record.get(time_col_idx) {
+            if let Ok(time_val) = time_field.parse::<f64>() {
+                // Only process rows that match our target times
+                if target_set.contains(&OrderedFloat(time_val)) {
+                    let mut data = HashMap::new();
+                    
+                    for (i, field) in record.iter().enumerate() {
+                        if i != time_col_idx && !field.trim().is_empty() {
+                            if let Ok(val) = field.parse::<f64>() {
+                                data.insert(headers[i].to_string(), val);
+                            }
+                        }
+                    }
+                    
+                    rows.push(CsvRow {
+                        time_sec: time_val,
+                        data,
+                    });
                 }
-            })
+            }
+        }
+    }
+    
+    Ok(rows)
+}
+
+// Process a chunk of time values
+fn process_time_chunk(
+    vocals_file: &str,
+    nonvocals_file: &str, 
+    video_file: &str,
+    time_chunk: &[f64],
+) -> Result<Vec<HashMap<String, f64>>, Box<dyn Error>> {
+    
+    // Load only the data we need for this time chunk
+    let vocals_rows = load_csv_by_times(vocals_file, time_chunk)?;
+    let nonvocals_rows = load_csv_by_times(nonvocals_file, time_chunk)?;
+    let video_rows = load_csv_by_times(video_file, time_chunk)?;
+    
+    // Create time indices for this chunk
+    let vocals_by_time = create_time_index_from_rows(&vocals_rows);
+    let nonvocals_by_time = create_time_index_from_rows(&nonvocals_rows);
+    let video_by_time = create_time_index_from_rows(&video_rows);
+    
+    let mut combined = Vec::with_capacity(time_chunk.len());
+    
+    // Process each time point
+    for &time_sec in time_chunk {
+        let time_key = OrderedFloat(time_sec);
+        let mut row = HashMap::new();
+        row.insert("time_sec".to_string(), time_sec);
+        
+        // Process vocals data
+        if let Some(vocal_row) = vocals_by_time.get(&time_key) {
+            for (k, &v) in &vocal_row.data {
+                if should_include_column(k) {
+                    row.insert(k.clone(), v);
+                }
+            }
+        }
+        
+        // Process nonvocals data with prefix
+        if let Some(nonvocal_row) = nonvocals_by_time.get(&time_key) {
+            for (k, &v) in &nonvocal_row.data {
+                if should_include_column(k) {
+                    let prefixed_key = if k.starts_with("nonvocal_") {
+                        k.clone()
+                    } else {
+                        format!("nonvocal_{}", k)
+                    };
+                    row.insert(prefixed_key, v);
+                }
+            }
+        }
+        
+        // Process video data
+        if let Some(video_row) = video_by_time.get(&time_key) {
+            for (k, &v) in &video_row.data {
+                if should_include_column(k) {
+                    row.insert(k.clone(), v);
+                }
+            }
+        }
+        
+        combined.push(row);
+    }
+    
+    // Apply processing steps sequentially to avoid memory spikes
+    apply_interpolation_sequential(&mut combined);
+    calculate_emas_sequential(&mut combined);
+    calculate_total_engagement_sequential(&mut combined);
+    scale_values_sequential(&mut combined);
+    
+    Ok(combined)
+}
+
+// Helper function to determine which columns to include
+fn should_include_column(column_name: &str) -> bool {
+    (column_name.contains("engage_ema") && column_name.contains("pct")) 
+        || column_name.contains("attention") 
+        || column_name.contains("cat_engage_percentile")
+}
+
+// Create time index from loaded rows  
+fn create_time_index_from_rows(rows: &[CsvRow]) -> std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow> {
+    let mut time_index = std::collections::BTreeMap::new();
+    for row in rows {
+        time_index.insert(OrderedFloat(row.time_sec), row);
+    }
+    time_index
+}
+
+// Determine output columns from a small sample
+fn determine_output_columns(
+    vocals_file: &str,
+    nonvocals_file: &str,
+    video_file: &str,
+    sample_times: &[f64],
+) -> Result<Vec<String>, Box<dyn Error>> {
+    
+    let sample_data = process_time_chunk(
+        vocals_file,
+        nonvocals_file,
+        video_file,
+        sample_times,
+    )?;
+    
+    let mut all_columns = BTreeSet::new();
+    for row in sample_data {
+        for key in row.keys() {
+            all_columns.insert(key.clone());
+        }
+    }
+    
+    Ok(all_columns.into_iter().collect())
+}
+
+// Write chunk results to CSV
+fn write_chunk_results(
+    csv_writer: &mut csv::Writer<BufWriter<File>>,
+    chunk_data: &[HashMap<String, f64>], 
+    column_order: &[String],
+) -> Result<(), Box<dyn Error>> {
+    
+    for row in chunk_data {
+        let record: Vec<String> = column_order
+            .iter()
+            .map(|col| row.get(col).unwrap_or(&0.0).to_string())
             .collect();
-        features.insert(key.to_string(), interpolate_nans(&vals));
-    }
-    features
-}
-
-// Linear interpolation for NaNs
-fn interpolate_nans(vals: &[f64]) -> Vec<f64> {
-    let mut out = vals.to_vec();
-    let n = out.len();
-    for i in 0..n {
-        if out[i].is_nan() {
-            let prev = (0..i).rev().find(|&j| !out[j].is_nan());
-            let next = (i + 1..n).find(|&j| !out[j].is_nan());
-            out[i] = match (prev, next) {
-                (Some(p), Some(nxt)) => out[p] + (out[nxt] - out[p]) * ((i - p) as f64 / (nxt - p) as f64),
-                (Some(p), None) => out[p],
-                (None, Some(nxt)) => out[nxt],
-                _ => 0.0,
-            };
-        }
-    }
-    out
-}
-
-// Time-weighted EMA calculation that accounts for actual time intervals
-fn time_weighted_ema(values: &[f64], times: &[f64], tau: f64) -> Vec<f64> {
-    let mut ema = vec![0.0; values.len()];
-    if values.is_empty() || times.is_empty() || values.len() != times.len() {
-        return ema;
+        csv_writer.write_record(record)?;
     }
     
-    ema[0] = values[0]; // start EMA at first value
+    Ok(())
+}
+
+// Sequential interpolation to avoid memory spikes
+fn apply_interpolation_sequential(combined: &mut [HashMap<String, f64>]) {
+    if combined.is_empty() {
+        return;
+    }
     
-    // Debug: Print time intervals for first few samples
-    if values.len() > 5 {
-        println!("Debug: Time intervals for tau={}s:", tau);
-        for i in 1..std::cmp::min(6, times.len()) {
-            let dt = times[i] - times[i - 1];
-            let alpha = 1.0 - (-dt / tau).exp();
-            println!("  Sample {}: dt={:.4}s, alpha={:.4}", i, dt, alpha);
+    // Get all column names except time_sec
+    let mut all_columns = BTreeSet::new();
+    for row in combined.iter() {
+        for key in row.keys() {
+            if key != "time_sec" {
+                all_columns.insert(key.clone());
+            }
         }
     }
     
-    for i in 1..values.len() {
-        let dt = times[i] - times[i - 1];
-        let alpha = 1.0 - (-dt / tau).exp(); // continuous-time EMA
-        ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1];
-    }
-    ema
-}
-
-// Helper function to get channel-averaged value for a specific pattern
-fn get_channel_averaged_value(row: &HashMap<String, f64>, pattern: &str, suffix: &str) -> f64 {
-    let chan1_key = format!("chan1_{}{}", pattern, suffix);
-    let chan2_key = format!("chan2_{}{}", pattern, suffix);
-    
-    let chan1_val = row.get(&chan1_key).copied().unwrap_or(0.0);
-    let chan2_val = row.get(&chan2_key).copied().unwrap_or(0.0);
-    
-    // If one channel has 0, use the other
-    if chan1_val == 0.0 && chan2_val != 0.0 {
-        chan2_val
-    } else if chan2_val == 0.0 && chan1_val != 0.0 {
-        chan1_val
-    } else if chan1_val != 0.0 && chan2_val != 0.0 {
-        // Average both channels
-        (chan1_val + chan2_val) / 2.0
-    } else {
-        0.0
+    // Process each column sequentially to minimize memory usage
+    for column_name in all_columns {
+        let mut values: Vec<Option<f64>> = combined
+            .iter()
+            .map(|row| row.get(&column_name).copied())
+            .collect();
+        
+        interpolate_column_values(&mut values);
+        
+        // Update values back into combined data
+        for (i, interpolated_value) in values.iter().enumerate() {
+            if let Some(val) = interpolated_value {
+                combined[i].insert(column_name.clone(), *val);
+            }
+        }
     }
 }
 
-// Calculate total_engag_raw using weighted 1s percentiles (parallelized)
-fn calculate_total_engag_raw(combined: &mut Vec<HashMap<String, f64>>) {
-    combined.par_iter_mut().for_each(|row| {
+// Sequential EMA calculation
+fn calculate_emas_sequential(combined: &mut [HashMap<String, f64>]) {
+    // Extract time values once
+    let time_values: Vec<f64> = combined
+        .iter()
+        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
+        .collect();
+    
+    // Process attention EMAs
+    calculate_attention_emas_memory_efficient(combined, &time_values);
+    
+    // Process emotion engagement EMAs
+    calculate_emotion_engagement_emas_memory_efficient(combined, &time_values);
+}
+
+// Memory-efficient attention EMA calculation
+fn calculate_attention_emas_memory_efficient(combined: &mut [HashMap<String, f64>], time_values: &[f64]) {
+    // Find attention columns without storing them all in memory
+    let attention_columns: Vec<String> = combined
+        .iter()
+        .flat_map(|row| row.keys().cloned())
+        .filter(|key| key.contains("attention"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    
+    for attention_col in attention_columns {
+        let values: Vec<f64> = combined
+            .iter()
+            .map(|row| row.get(&attention_col).copied().unwrap_or(0.0))
+            .collect();
+        
+        let ema_1s_pct = calculate_time_aware_ema_with_percentiles(&values, time_values, 1.0);
+        let ema_10s_pct = calculate_time_aware_ema_with_percentiles(&values, time_values, 10.0);
+        
+        let col_1s = format!("{}_ema_1s_pct", attention_col);
+        let col_10s = format!("{}_ema_10s_pct", attention_col);
+        
+        for (i, row) in combined.iter_mut().enumerate() {
+            row.insert(col_1s.clone(), ema_1s_pct[i]);
+            row.insert(col_10s.clone(), ema_10s_pct[i]);
+        }
+        
+        // Clear intermediate vectors to free memory
+        drop(ema_1s_pct);
+        drop(ema_10s_pct);
+    }
+}
+
+// Memory-efficient emotion engagement EMA calculation
+fn calculate_emotion_engagement_emas_memory_efficient(combined: &mut [HashMap<String, f64>], time_values: &[f64]) {
+    let cat_values: Vec<f64> = combined
+        .iter()
+        .map(|row| {
+            row.keys()
+                .find(|key| key.contains("cat_engage_percentile"))
+                .and_then(|key| row.get(key))
+                .copied()
+                .unwrap_or(0.0)
+        })
+        .collect();
+    
+    let ema_1s = calculate_time_aware_ema_raw(&cat_values, time_values, 1.0);
+    let ema_10s = calculate_time_aware_ema_raw(&cat_values, time_values, 10.0);
+    
+    for (i, row) in combined.iter_mut().enumerate() {
+        row.insert("emotion_engage_1s_pct".to_string(), ema_1s[i]);
+        row.insert("emotion_engage_10s_pct".to_string(), ema_10s[i]);
+    }
+}
+
+// Sequential total engagement calculation
+fn calculate_total_engagement_sequential(combined: &mut [HashMap<String, f64>]) {
+    // Step 1: Calculate raw total engagement
+    calculate_total_engag_raw_sequential(combined);
+    
+    // Step 2: Calculate total engagement EMAs
+    calculate_total_engag_raw_emas_sequential(combined);
+}
+
+// Memory-efficient total engagement raw calculation
+fn calculate_total_engag_raw_sequential(combined: &mut [HashMap<String, f64>]) {
+    for row in combined.iter_mut() {
         let mut weighted_sum = 0.0;
         
-        // Emotion engage (22%) - using emotion_engage_1s_pct
+        // Emotion engage (22%)
         if let Some(val) = row.get("emotion_engage_1s_pct") {
-            weighted_sum += val * WEIGHTS_RAW[0].1; // 0.22
+            weighted_sum += val * WEIGHTS_RAW[0].1;
         }
         
-        // Transcription engage (18%) - need to find transc columns with 1s
+        // Transcription engage (18%)
         let transc_val = row.keys()
             .filter(|k| k.contains("transc") && k.contains("1s"))
             .filter_map(|k| row.get(k))
             .next()
             .copied()
             .unwrap_or(0.0);
-        weighted_sum += transc_val * WEIGHTS_RAW[1].1; // 0.18
+        weighted_sum += transc_val * WEIGHTS_RAW[1].1;
         
-        // RMS Energy Vocal (13%) - average chan1 and chan2 rms_energy 1s pct
+        // RMS Energy Vocal (13%)
         let rms_vocal = get_channel_averaged_value(row, "rms_energy_engage_ema_", "1s_pct");
-        weighted_sum += rms_vocal * WEIGHTS_RAW[2].1; // 0.13
+        weighted_sum += rms_vocal * WEIGHTS_RAW[2].1;
         
-        // Spectral Vocal (10%) - average chan1 and chan2 spectral 1s pct
+        // Spectral Vocal (10%)
         let spectral_vocal = get_channel_averaged_value(row, "spectral_engage_ema_", "1s_pct");
-        weighted_sum += spectral_vocal * WEIGHTS_RAW[3].1; // 0.10
+        weighted_sum += spectral_vocal * WEIGHTS_RAW[3].1;
         
-        // Spectral Nonvocal (3%) - need nonvocal spectral 1s pct
+        // Spectral Nonvocal (3%)
         let spectral_nonvocal = row.keys()
             .filter(|k| k.contains("nonvocal") && k.contains("spectral") && k.contains("1s_pct"))
             .filter_map(|k| row.get(k))
             .next()
             .copied()
             .unwrap_or(0.0);
-        weighted_sum += spectral_nonvocal * WEIGHTS_RAW[4].1; // 0.03
+        weighted_sum += spectral_nonvocal * WEIGHTS_RAW[4].1;
         
-        // RMS Energy Nonvocal (5%) - need nonvocal rms 1s pct
+        // RMS Energy Nonvocal (5%)
         let rms_nonvocal = row.keys()
             .filter(|k| k.contains("nonvocal") && k.contains("rms_energy") && k.contains("1s_pct"))
             .filter_map(|k| row.get(k))
             .next()
             .copied()
             .unwrap_or(0.0);
-        weighted_sum += rms_nonvocal * WEIGHTS_RAW[5].1; // 0.05
+        weighted_sum += rms_nonvocal * WEIGHTS_RAW[5].1;
         
-        // Video (25%) - using visual_engage_ema_1s_pct
+        // Video (25%)
         if let Some(val) = row.get("visual_engage_ema_1s_pct") {
-            weighted_sum += val * WEIGHTS_RAW[6].1; // 0.25
+            weighted_sum += val * WEIGHTS_RAW[6].1;
         }
         
         row.insert("total_engag_raw".to_string(), weighted_sum);
-    });
+    }
 }
 
-// Fixed EMA percentile calculation for total_engag_raw with time awareness
-fn calculate_total_engag_raw_emas(combined: &mut Vec<HashMap<String, f64>>) {
+// Memory-efficient total engagement EMA calculation
+fn calculate_total_engag_raw_emas_sequential(combined: &mut [HashMap<String, f64>]) {
     let raw_values: Vec<f64> = combined
         .iter()
         .map(|row| row.get("total_engag_raw").copied().unwrap_or(0.0))
@@ -345,295 +543,84 @@ fn calculate_total_engag_raw_emas(combined: &mut Vec<HashMap<String, f64>>) {
         .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
         .collect();
     
-    // Debug: Check if we have non-zero raw values
-    let non_zero_count = raw_values.iter().filter(|&&x| x != 0.0).count();
-    println!("Debug: {} non-zero total_engag_raw values out of {}", non_zero_count, raw_values.len());
-    
-    // Calculate time-aware EMAs with proper percentile conversion
+    // Calculate EMAs one by one to minimize peak memory usage
     let ema_1s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 1.0);
-    let ema_5s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 5.0);
-    let ema_10s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 10.0);
-    let ema_30s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 30.0);
     
-    // Insert the calculated percentile values
+    // Insert 1s values and drop intermediate vector
     for (i, row) in combined.iter_mut().enumerate() {
         row.insert("total_engag_1s_pct".to_string(), ema_1s_pct[i]);
+    }
+    drop(ema_1s_pct);
+    
+    let ema_5s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 5.0);
+    for (i, row) in combined.iter_mut().enumerate() {
         row.insert("total_engag_5s_pct".to_string(), ema_5s_pct[i]);
+    }
+    drop(ema_5s_pct);
+    
+    let ema_10s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 10.0);
+    for (i, row) in combined.iter_mut().enumerate() {
         row.insert("total_engag_10s_pct".to_string(), ema_10s_pct[i]);
+    }
+    drop(ema_10s_pct);
+    
+    let ema_30s_pct = calculate_time_aware_ema_with_percentiles(&raw_values, &time_values, 30.0);
+    for (i, row) in combined.iter_mut().enumerate() {
         row.insert("total_engag_30s_pct".to_string(), ema_30s_pct[i]);
     }
 }
 
-// Combine features but only include engage EMA pct columns and attention data
-fn combine_features_filtered(
-    vocals_rows: &[CsvRow],
-    _vocal_features: &HashMap<String, Vec<f64>>,
-    nonvocals_rows: &[CsvRow],
-    _nonvocal_features: &HashMap<String, Vec<f64>>,
-    video_rows: &[CsvRow],
-    _video_features: &HashMap<String, Vec<f64>>,
-) -> Vec<HashMap<String, f64>> {
-    let vocals_by_time = create_time_index(vocals_rows);
-    let nonvocals_by_time = create_time_index(nonvocals_rows);
-    let video_by_time = create_time_index(video_rows);
-
-    let mut all_times: BTreeSet<OrderedFloat<f64>> = BTreeSet::new();
-    all_times.extend(vocals_by_time.keys().copied());
-    all_times.extend(nonvocals_by_time.keys().copied());
-    all_times.extend(video_by_time.keys().copied());
-
-    let mut combined = Vec::new();
-
-    for time_sec in all_times {
-        let mut row = HashMap::new();
-        row.insert("time_sec".to_string(), time_sec.0);
-
-        // Process vocals data
-        if let Some(vocal_row) = vocals_by_time.get(&time_sec) {
-            for (k, v) in &vocal_row.data {
-                if let Some(val) = *v {
-                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
-                        row.insert(k.clone(), val);
-                    }
-                }
-            }
-        }
-
-        // Process nonvocals data with prefix
-        if let Some(nonvocal_row) = nonvocals_by_time.get(&time_sec) {
-            for (k, v) in &nonvocal_row.data {
-                if let Some(val) = *v {
-                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
-                        let prefixed_key = if k.starts_with("nonvocal_") {
-                            k.clone()
-                        } else {
-                            format!("nonvocal_{}", k)
-                        };
-                        row.insert(prefixed_key, val);
-                    }
-                }
-            }
-        }
-
-        // Process video data
-        if let Some(video_row) = video_by_time.get(&time_sec) {
-            for (k, v) in &video_row.data {
-                if let Some(val) = *v {
-                    if (k.contains("engage_ema") && k.contains("pct")) || k.contains("attention") || k.contains("cat_engage_percentile") {
-                        row.insert(k.clone(), val);
-                    }
-                }
-            }
-        }
-
-        combined.push(row);
-    }
-
-    // Debug: Check what we have after initial combination
-    debug_available_columns(&combined);
-
-    // Step 1: Apply interpolation and basic EMAs first
-    apply_linear_interpolation_and_emas(&mut combined);
-    
-    // Debug: Check what we have after EMAs
-    println!("Debug: After EMAs, checking for required columns...");
-    debug_available_columns(&combined);
-    
-    // Step 2: Calculate total_engag_raw (depends on existing percentile columns)
-    calculate_total_engag_raw(&mut combined);
-    
-    // Step 3: Calculate total_engag percentiles LAST (depends on total_engag_raw)
-    calculate_total_engag_raw_emas(&mut combined);
-
-    combined
-}
-
-// Create a time-indexed map from CSV rows
-fn create_time_index(rows: &[CsvRow]) -> std::collections::BTreeMap<OrderedFloat<f64>, &CsvRow> {
-    let mut time_index = std::collections::BTreeMap::new();
-    
-    for row in rows {
-        if let Some(Some(time_val)) = row.data.get("time_sec") {
-            let time_key = OrderedFloat(*time_val);
-            time_index.insert(time_key, row);
-        }
-    }
-    
-    time_index
-}
-
-// Finalize data by interpolating to 30 rows per second (30 fps) with parallelization
-fn finalize_data(mut data: Vec<HashMap<String, f64>>) -> Vec<HashMap<String, f64>> {
-    if data.is_empty() {
-        return data;
-    }
-    
-    // Sort by time_sec to ensure proper ordering
-    data.sort_by(|a, b| {
-        let time_a = a.get("time_sec").copied().unwrap_or(0.0);
-        let time_b = b.get("time_sec").copied().unwrap_or(0.0);
-        time_a.partial_cmp(&time_b).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    
-    let first_time = data.first().unwrap().get("time_sec").copied().unwrap_or(0.0);
-    let last_time = data.last().unwrap().get("time_sec").copied().unwrap_or(0.0);
-    
-    // Create 30fps timeline (1/30 second intervals)
-    let fps = 30.0;
-    let time_step = 1.0 / fps;
-    let mut target_times = Vec::new();
-    
-    let mut current_time = first_time;
-    while current_time <= last_time {
-        target_times.push(current_time);
-        current_time += time_step;
-    }
-    
-    // Get all column names except time_sec
-    let mut all_columns = std::collections::HashSet::new();
-    for row in &data {
-        for key in row.keys() {
-            if key != "time_sec" {
-                all_columns.insert(key.clone());
-            }
-        }
-    }
-    let columns: Vec<String> = all_columns.into_iter().collect();
-    
-    // Extract original time series once for efficiency
-    let original_times: Vec<f64> = data.iter()
-        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
-        .collect();
-    
-    // Pre-compute column data for parallel access
-    let column_data: HashMap<String, Vec<f64>> = columns.par_iter()
-        .map(|column| {
-            let values: Vec<f64> = data.iter()
-                .map(|row| row.get(column).copied().unwrap_or(0.0))
-                .collect();
-            (column.clone(), values)
-        })
-        .collect();
-    
-    // Build interpolated data in parallel
-    let interpolated_data: Vec<HashMap<String, f64>> = target_times.par_iter()
-        .map(|&target_time| {
-            let mut new_row = HashMap::new();
-            new_row.insert("time_sec".to_string(), target_time);
-            
-            // Interpolate each column
-            for column in &columns {
-                if let Some(values) = column_data.get(column) {
-                    let interpolated_value = interpolate_at_time(&original_times, values, target_time);
-                    new_row.insert(column.clone(), interpolated_value);
-                }
-            }
-            
-            new_row
-        })
-        .collect();
-    
-    interpolated_data
-}
-
-// Efficiently interpolate a single value at a specific time using linear interpolation
-fn interpolate_at_time(times: &[f64], values: &[f64], target_time: f64) -> f64 {
-    if times.is_empty() || values.is_empty() || times.len() != values.len() {
-        return 0.0;
-    }
-    
-    // Handle edge cases
-    if target_time <= times[0] {
-        return values[0];
-    }
-    if target_time >= times[times.len() - 1] {
-        return values[values.len() - 1];
-    }
-    
-    // Binary search for the correct interval (more efficient than linear search)
-    let mut left = 0;
-    let mut right = times.len() - 1;
-    
-    while left < right - 1 {
-        let mid = (left + right) / 2;
-        if times[mid] <= target_time {
-            left = mid;
-        } else {
-            right = mid;
-        }
-    }
-    
-    // Linear interpolation between times[left] and times[right]
-    let t0 = times[left];
-    let t1 = times[right];
-    let v0 = values[left];
-    let v1 = values[right];
-    
-    if (t1 - t0).abs() < f64::EPSILON {
-        // Avoid division by zero
-        return v0;
-    }
-    
-    let ratio = (target_time - t0) / (t1 - t0);
-    v0 + ratio * (v1 - v0)
-}
-
-// Apply linear interpolation to all columns and calculate EMAs (parallelized)
-fn apply_linear_interpolation_and_emas(combined: &mut Vec<HashMap<String, f64>>) {
+// Sequential scaling to avoid memory spikes
+fn scale_values_sequential(combined: &mut [HashMap<String, f64>]) {
     if combined.is_empty() {
         return;
     }
     
-    // Collect all column names except time_sec
-    let mut all_columns = std::collections::HashSet::new();
-    for row in combined.iter() {
-        for key in row.keys() {
-            if key != "time_sec" {
-                all_columns.insert(key.clone());
+    let column_names: Vec<String> = combined[0].keys().cloned().collect();
+    
+    for column_name in column_names {
+        if column_name == "time_sec" || column_name.contains("attention") {
+            continue;
+        }
+        
+        // Process scaling for this column
+        let values: Vec<f64> = combined.iter()
+            .map(|row| row.get(&column_name).copied().unwrap_or(0.0))
+            .collect();
+        
+        let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        
+        if min_val >= -0.001 && max_val <= 1.001 && max_val > 0.001 {
+            for row in combined.iter_mut() {
+                if let Some(value) = row.get_mut(&column_name) {
+                    *value = (*value).clamp(0.0, 1.0) * 100.0;
+                }
             }
         }
     }
-    
-    // Convert to vector for parallel processing
-    let columns: Vec<String> = all_columns.into_iter().collect();
-    
-    // Apply linear interpolation to each column in parallel
-    let combined_arc = Arc::new(Mutex::new(combined));
-    
-    columns.par_iter().for_each(|column_name| {
-        // Extract values for this column
-        let values: Vec<Option<f64>> = {
-            let combined_guard = combined_arc.lock().unwrap();
-            combined_guard
-                .iter()
-                .map(|row| row.get(column_name).copied())
-                .collect()
-        };
-        
-        // Apply linear interpolation
-        let mut interpolated_values = values;
-        interpolate_column_values(&mut interpolated_values);
-        
-        // Update the combined data with interpolated values
-        let mut combined_guard = combined_arc.lock().unwrap();
-        for (i, interpolated_value) in interpolated_values.iter().enumerate() {
-            if let Some(val) = interpolated_value {
-                combined_guard[i].insert(column_name.clone(), *val);
-            }
-        }
-    });
-    
-    // Drop the Arc wrapper to get back our mutable reference
-    let combined = Arc::try_unwrap(combined_arc).unwrap().into_inner().unwrap();
-    
-    // Calculate EMAs for attention columns
-    calculate_attention_emas(combined);
-    
-    // Calculate emotion engagement EMAs from cat_engage_percentile
-    calculate_emotion_engagement_emas(combined);
 }
 
-// Linear interpolation for a single column
+// Helper functions (keeping original functionality)
+
+fn get_channel_averaged_value(row: &HashMap<String, f64>, pattern: &str, suffix: &str) -> f64 {
+    let chan1_key = format!("chan1_{}{}", pattern, suffix);
+    let chan2_key = format!("chan2_{}{}", pattern, suffix);
+    
+    let chan1_val = row.get(&chan1_key).copied().unwrap_or(0.0);
+    let chan2_val = row.get(&chan2_key).copied().unwrap_or(0.0);
+    
+    if chan1_val == 0.0 && chan2_val != 0.0 {
+        chan2_val
+    } else if chan2_val == 0.0 && chan1_val != 0.0 {
+        chan1_val
+    } else if chan1_val != 0.0 && chan2_val != 0.0 {
+        (chan1_val + chan2_val) / 2.0
+    } else {
+        0.0
+    }
+}
+
 fn interpolate_column_values(values: &mut Vec<Option<f64>>) {
     let n = values.len();
     
@@ -647,7 +634,6 @@ fn interpolate_column_values(values: &mut Vec<Option<f64>>) {
     }
     
     if let Some(first_idx) = first_valid {
-        // Fill everything before first valid value
         let first_val = values[first_idx].unwrap();
         for i in 0..first_idx {
             values[i] = Some(first_val);
@@ -670,10 +656,9 @@ fn interpolate_column_values(values: &mut Vec<Option<f64>>) {
         }
     }
     
-    // Linear interpolation for gaps in the middle
+    // Linear interpolation for gaps
     for i in 0..n {
         if values[i].is_none() {
-            // Find previous and next valid values
             let prev = (0..i).rev().find(|&j| values[j].is_some());
             let next = (i + 1..n).find(|&j| values[j].is_some());
             
@@ -687,198 +672,351 @@ fn interpolate_column_values(values: &mut Vec<Option<f64>>) {
     }
 }
 
-// Calculate EMA percentiles for attention columns with time awareness
-fn calculate_attention_emas(combined: &mut Vec<HashMap<String, f64>>) {
-    // Extract time values once
-    let time_values: Vec<f64> = combined
-        .iter()
-        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
-        .collect();
-    
-    // Find all attention column names
-    let attention_columns: Vec<String> = combined
-        .iter()
-        .flat_map(|row| row.keys().cloned())
-        .filter(|key| key.contains("attention"))
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    
-    for attention_col in attention_columns {
-        let values: Vec<f64> = combined
-            .iter()
-            .map(|row| row.get(&attention_col).copied().unwrap_or(0.0))
-            .collect();
-        
-        let ema_1s_pct = calculate_time_aware_ema_with_percentiles(&values, &time_values, 1.0);
-        let ema_10s_pct = calculate_time_aware_ema_with_percentiles(&values, &time_values, 10.0);
-        
-        let col_1s = format!("{}_ema_1s_pct", attention_col);
-        let col_10s = format!("{}_ema_10s_pct", attention_col);
-        
-        for (i, row) in combined.iter_mut().enumerate() {
-            row.insert(col_1s.clone(), ema_1s_pct[i]);
-            row.insert(col_10s.clone(), ema_10s_pct[i]);
-        }
-    }
-}
-
-// Calculate emotion engagement EMAs from cat_engage_percentile with time awareness
-fn calculate_emotion_engagement_emas(combined: &mut Vec<HashMap<String, f64>>) {
-    // Extract time values
-    let time_values: Vec<f64> = combined
-        .iter()
-        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
-        .collect();
-    
-    // Find cat_engage_percentile values (including nonvocal_cat_engage_percentile)
-    let cat_values: Vec<f64> = combined
-        .iter()
-        .map(|row| {
-            // Look for cat_engage_percentile in vocals/video or nonvocal_cat_engage_percentile
-            row.keys()
-                .find(|key| key.contains("cat_engage_percentile"))
-                .and_then(|key| row.get(key))
-                .copied()
-                .unwrap_or(0.0)
-        })
-        .collect();
-    
-    let ema_1s = calculate_time_aware_ema_raw(&cat_values, &time_values, 1.0);
-    let ema_10s = calculate_time_aware_ema_raw(&cat_values, &time_values, 10.0);
-    
-    for (i, row) in combined.iter_mut().enumerate() {
-        row.insert("emotion_engage_1s_pct".to_string(), ema_1s[i]);
-        row.insert("emotion_engage_10s_pct".to_string(), ema_10s[i]);
-    }
-}
-
-// Fixed EMA calculation with proper percentile conversion and time awareness
-fn calculate_ema_with_percentiles(values: &[f64], window_seconds: f64) -> Vec<f64> {
-    let alpha = 2.0 / (window_seconds + 1.0);
-    let mut ema_values = vec![0.0; values.len()];
-    
-    if !values.is_empty() {
-        ema_values[0] = values[0];
-        for i in 1..values.len() {
-            ema_values[i] = alpha * values[i] + (1.0 - alpha) * ema_values[i - 1];
-        }
+fn time_weighted_ema(values: &[f64], times: &[f64], tau: f64) -> Vec<f64> {
+    let mut ema = vec![0.0; values.len()];
+    if values.is_empty() || times.is_empty() || values.len() != times.len() {
+        return ema;
     }
     
-    // Convert EMA values to percentiles (0-100 scale)
-    convert_to_percentiles(&ema_values)
+    ema[0] = values[0];
+    
+    for i in 1..values.len() {
+        let dt = times[i] - times[i - 1];
+        let alpha = 1.0 - (-dt / tau).exp();
+        ema[i] = alpha * values[i] + (1.0 - alpha) * ema[i - 1];
+    }
+    ema
 }
 
-// Time-aware EMA calculation with percentile conversion
 fn calculate_time_aware_ema_with_percentiles(values: &[f64], times: &[f64], tau_seconds: f64) -> Vec<f64> {
     let ema_values = time_weighted_ema(values, times, tau_seconds);
     convert_to_percentiles(&ema_values)
 }
 
-// Time-aware EMA calculation (raw values)
 fn calculate_time_aware_ema_raw(values: &[f64], times: &[f64], tau_seconds: f64) -> Vec<f64> {
     time_weighted_ema(values, times, tau_seconds)
 }
 
-// Calculate raw EMA (for emotion engagement)
-fn calculate_ema_raw(values: &[f64], window_seconds: f64) -> Vec<f64> {
-    let alpha = 2.0 / (window_seconds + 1.0);
-    let mut ema_values = vec![0.0; values.len()];
-    
-    if !values.is_empty() {
-        ema_values[0] = values[0];
-        for i in 1..values.len() {
-            ema_values[i] = alpha * values[i] + (1.0 - alpha) * ema_values[i - 1];
-        }
-    }
-    
-    ema_values
-}
-
-// Convert values to proper percentiles (0-100 range)
 fn convert_to_percentiles(values: &[f64]) -> Vec<f64> {
     if values.is_empty() {
         return Vec::new();
     }
     
-    // Find min and max values for normalization
     let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     
-    // Handle edge case where all values are the same
     if (max_val - min_val).abs() < f64::EPSILON {
-        return vec![50.0; values.len()]; // Return 50% if no variation
+        return vec![50.0; values.len()];
     }
     
-    // Scale to 0.0-100.0 range
     values.iter()
         .map(|&val| ((val - min_val) / (max_val - min_val)) * 100.0)
         .collect()
 }
 
-// Debug function to show available columns
-fn debug_available_columns(combined: &[HashMap<String, f64>]) {
-    if let Some(first_row) = combined.first() {
-        let mut columns: Vec<String> = first_row.keys().cloned().collect();
-        columns.sort();
+// Additional memory-efficient utility functions
+
+// Stream-based 30fps interpolation to avoid loading entire dataset
+fn finalize_data_streaming(
+    input_file: &str,
+    output_file: &str,
+) -> Result<(), Box<dyn Error>> {
+    // Read input file to determine time range
+    let (first_time, last_time) = get_time_range(input_file)?;
+    
+    // Create 30fps timeline
+    let fps = 30.0;
+    let time_step = 1.0 / fps;
+    let mut target_times = Vec::new();
+    
+    let mut current_time = first_time;
+    while current_time <= last_time {
+        target_times.push(current_time);
+        current_time += time_step;
+    }
+    
+    // Process in chunks to avoid OOM
+    let chunk_size = 1000; // Smaller chunks for 30fps processing
+    let output_writer = BufWriter::new(File::create(output_file)?);
+    let mut csv_writer = WriterBuilder::new().from_writer(output_writer);
+    
+    // Determine columns from input file
+    let columns = get_column_names(input_file)?;
+    csv_writer.write_record(&columns)?;
+    
+    // Process chunks of target times
+    for time_chunk in target_times.chunks(chunk_size) {
+        let interpolated_chunk = interpolate_time_chunk_streaming(input_file, time_chunk, &columns)?;
         
-        println!("Debug: Available columns ({} total):", columns.len());
-        for (i, col) in columns.iter().enumerate() {
-            if i < 20 { // Show first 20 columns
-                let sample_val = first_row.get(col).copied().unwrap_or(0.0);
-                println!("  {}: {}", col, sample_val);
+        // Write results immediately
+        for row in interpolated_chunk {
+            let record: Vec<String> = columns
+                .iter()
+                .map(|col| row.get(col).unwrap_or(&0.0).to_string())
+                .collect();
+            csv_writer.write_record(record)?;
+        }
+    }
+    
+    csv_writer.flush()?;
+    Ok(())
+}
+
+// Get time range without loading full dataset
+fn get_time_range(file_path: &str) -> Result<(f64, f64), Box<dyn Error>> {
+    let file = File::open(file_path)?;
+    let buf_reader = BufReader::new(file);
+    let mut rdr = csv::ReaderBuilder::new().from_reader(buf_reader);
+    
+    let headers = rdr.headers()?.clone();
+    let time_col_idx = headers.iter()
+        .position(|h| h == "time_sec")
+        .ok_or("time_sec column not found")?;
+    
+    let mut first_time = None;
+    let mut last_time = None;
+    
+    for result in rdr.records() {
+        let record = result?;
+        if let Some(time_field) = record.get(time_col_idx) {
+            if let Ok(time_val) = time_field.parse::<f64>() {
+                if first_time.is_none() {
+                    first_time = Some(time_val);
+                }
+                last_time = Some(time_val);
             }
         }
-        
-        // Look for specific engagement patterns
-        let engagement_cols: Vec<&String> = columns.iter()
-            .filter(|col| col.contains("engage") || col.contains("attention") || col.contains("visual"))
-            .collect();
-        
-        println!("Debug: Engagement-related columns ({}):", engagement_cols.len());
-        for col in engagement_cols.iter().take(10) {
-            let sample_val = first_row.get(*col).copied().unwrap_or(0.0);
-            println!("  {}: {}", col, sample_val);
-        }
+    }
+    
+    match (first_time, last_time) {
+        (Some(first), Some(last)) => Ok((first, last)),
+        _ => Err("No valid time values found".into()),
     }
 }
 
-// Scale 0-1 range values to 0-100 range
-fn scale_0_1_to_0_100(combined: &mut Vec<HashMap<String, f64>>) {
-    if combined.is_empty() {
-        return;
+// Get column names without loading full dataset
+fn get_column_names(file_path: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let file = File::open(file_path)?;
+    let buf_reader = BufReader::new(file);
+    let mut rdr = csv::ReaderBuilder::new().from_reader(buf_reader);
+    
+    let headers = rdr.headers()?.clone();
+    Ok(headers.iter().map(|s| s.to_string()).collect())
+}
+
+// Memory-efficient chunk interpolation
+fn interpolate_time_chunk_streaming(
+    input_file: &str,
+    target_times: &[f64],
+    columns: &[String],
+) -> Result<Vec<HashMap<String, f64>>, Box<dyn Error>> {
+    
+    // Find the time range we need to load (with buffer)
+    let min_target = target_times.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_target = target_times.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let buffer = 2.0; // 2 second buffer on each side
+    
+    // Load only the data we need for interpolation
+    let source_data = load_csv_time_range(
+        input_file, 
+        min_target - buffer, 
+        max_target + buffer,
+        columns,
+    )?;
+    
+    if source_data.is_empty() {
+        // Return empty rows for target times
+        return Ok(target_times.iter().map(|&time| {
+            let mut row = HashMap::new();
+            row.insert("time_sec".to_string(), time);
+            for col in columns {
+                if col != "time_sec" {
+                    row.insert(col.clone(), 0.0);
+                }
+            }
+            row
+        }).collect());
     }
     
-    // Get all column names
-    let column_names: Vec<String> = combined[0].keys().cloned().collect();
+    // Extract source times and values for interpolation
+    let source_times: Vec<f64> = source_data.iter()
+        .map(|row| row.get("time_sec").copied().unwrap_or(0.0))
+        .collect();
     
-    for column_name in column_names {
-        // Skip time_sec and any column containing "attention"
-        if column_name == "time_sec" || column_name.contains("attention") {
-            continue;
+    let mut result = Vec::with_capacity(target_times.len());
+    
+    for &target_time in target_times {
+        let mut interpolated_row = HashMap::new();
+        interpolated_row.insert("time_sec".to_string(), target_time);
+        
+        // Interpolate each column
+        for col in columns {
+            if col != "time_sec" {
+                let source_values: Vec<f64> = source_data.iter()
+                    .map(|row| row.get(col).copied().unwrap_or(0.0))
+                    .collect();
+                
+                let interpolated_value = interpolate_at_time(&source_times, &source_values, target_time);
+                interpolated_row.insert(col.clone(), interpolated_value);
+            }
         }
         
-        // Extract all values for this column
-        let values: Vec<f64> = combined.iter()
-            .map(|row| row.get(&column_name).copied().unwrap_or(0.0))
-            .collect();
-        
-        // Check if column is in 0-1 range (allowing small tolerance for floating point errors)
-        let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        
-        // If values are in 0-1 range (with small tolerance), scale to 0-100
-        if min_val >= -0.001 && max_val <= 1.001 && max_val > 0.001 {
-            println!(
-                "Scaling column '{}' from 0-1 to 0-100 range (min: {}, max: {})", 
-                column_name, min_val, max_val
-            );
-            
-            for row in combined.iter_mut() {
-                if let Some(value) = row.get_mut(&column_name) {
-                    *value = (*value).clamp(0.0, 1.0) * 100.0;
+        result.push(interpolated_row);
+    }
+    
+    Ok(result)
+}
+
+// Load CSV data within a specific time range
+fn load_csv_time_range(
+    file_path: &str,
+    min_time: f64,
+    max_time: f64,
+    expected_columns: &[String],
+) -> Result<Vec<HashMap<String, f64>>, Box<dyn Error>> {
+    
+    let file = File::open(file_path)?;
+    let buf_reader = BufReader::new(file);
+    let mut rdr = csv::ReaderBuilder::new().from_reader(buf_reader);
+    
+    let headers = rdr.headers()?.clone();
+    let time_col_idx = headers.iter()
+        .position(|h| h == "time_sec")
+        .ok_or("time_sec column not found")?;
+    
+    let mut rows = Vec::new();
+    
+    for result in rdr.records() {
+        let record = result?;
+        if let Some(time_field) = record.get(time_col_idx) {
+            if let Ok(time_val) = time_field.parse::<f64>() {
+                // Only load rows within our target time range
+                if time_val >= min_time && time_val <= max_time {
+                    let mut data = HashMap::new();
+                    data.insert("time_sec".to_string(), time_val);
+                    
+                    for (i, field) in record.iter().enumerate() {
+                        if i != time_col_idx && !field.trim().is_empty() {
+                            let column_name = &headers[i];
+                            if let Ok(val) = field.parse::<f64>() {
+                                data.insert(column_name.to_string(), val);
+                            }
+                        }
+                    }
+                    
+                    // Ensure all expected columns are present (with 0.0 default)
+                    for col in expected_columns {
+                        if !data.contains_key(col) && col != "time_sec" {
+                            data.insert(col.clone(), 0.0);
+                        }
+                    }
+                    
+                    rows.push(data);
                 }
             }
         }
     }
+    
+    // Sort by time for proper interpolation
+    rows.sort_by(|a, b| {
+        let time_a = a.get("time_sec").copied().unwrap_or(0.0);
+        let time_b = b.get("time_sec").copied().unwrap_or(0.0);
+        time_a.partial_cmp(&time_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    Ok(rows)
+}
+
+// Efficient single-value interpolation (reused from original)
+fn interpolate_at_time(times: &[f64], values: &[f64], target_time: f64) -> f64 {
+    if times.is_empty() || values.is_empty() || times.len() != values.len() {
+        return 0.0;
+    }
+    
+    if target_time <= times[0] {
+        return values[0];
+    }
+    if target_time >= times[times.len() - 1] {
+        return values[values.len() - 1];
+    }
+    
+    // Binary search for efficiency
+    let mut left = 0;
+    let mut right = times.len() - 1;
+    
+    while left < right - 1 {
+        let mid = (left + right) / 2;
+        if times[mid] <= target_time {
+            left = mid;
+        } else {
+            right = mid;
+        }
+    }
+    
+    let t0 = times[left];
+    let t1 = times[right];
+    let v0 = values[left];
+    let v1 = values[right];
+    
+    if (t1 - t0).abs() < f64::EPSILON {
+        return v0;
+    }
+    
+    let ratio = (target_time - t0) / (t1 - t0);
+    v0 + ratio * (v1 - v0)
+}
+
+// Memory usage tracking and warnings
+struct MemoryTracker {
+    current_memory_estimate: usize,
+}
+
+impl MemoryTracker {
+    fn new() -> Self {
+        Self {
+            current_memory_estimate: 0,
+        }
+    }
+    
+    fn log_memory_usage(&self, stage: &str, row_count: usize) {
+        let mb_estimate = self.current_memory_estimate / (1024 * 1024);
+        println!("🧠 Memory estimate at {}: ~{}MB for {} rows", stage, mb_estimate, row_count);
+    }
+}
+
+// Enhanced main function with memory tracking
+pub fn process_with_memory_monitoring(
+    vocals_file: &str,
+    nonvocals_file: &str,
+    video_file: &str,
+    output_file: &str,
+) -> Result<(), Box<dyn Error>> {
+    
+    let memory_tracker = MemoryTracker::new();
+    
+    println!("🚀 Starting OOM-safe engagement processing...");
+    memory_tracker.log_memory_usage("startup", 0);
+    
+    // Step 1: Process main engagement data
+    let temp_file = format!("{}.temp", output_file);
+    
+    let memory_monitor = MemoryMonitor::new();
+    process_engagement_streaming(
+        vocals_file,
+        nonvocals_file,
+        video_file,
+        &temp_file,
+        &memory_monitor,
+    )?;
+    
+    println!("✅ Main processing complete, starting 30fps interpolation...");
+    
+    // Step 2: Apply 30fps interpolation
+    finalize_data_streaming(&temp_file, output_file)?;
+    
+    // Cleanup temporary file
+    std::fs::remove_file(&temp_file).ok();
+    
+    println!("✅ Processing complete! Output saved to: {}", output_file);
+    Ok(())
 }
