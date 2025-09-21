@@ -1,0 +1,43 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 5
+Started: Sun Sep 21 13:32:11 EDT 2025
+Input: ./../temp/funger1.mp4
+GUI Overlay: false
+
+[2025-09-21 13:32:11] === INITIALIZATION ===
+[2025-09-21 13:32:11] FILE INFO: Input file - Size: 9195478118 bytes (14061.846333s duration)
+[2025-09-21 13:32:11] TIMING: Initialization completed in .295348295s
+[2025-09-21 13:32:11] === AUDIO TRACK PROCESSING START ===
+[2025-09-21 13:32:12] Found 1 audio stream(s)
+[2025-09-21 13:32:12] === Processing Audio Stream 0 ===
+[2025-09-21 13:32:12] Starting silence detection for stream 0
+[2025-09-21 13:33:35] TIMING: Silence detection (stream 0) completed in 83.102215693s
+[2025-09-21 13:33:35] Silence analysis: 221 segments, 7% of 14061s total
+[2025-09-21 13:33:35] Extracting audio stream 0
+[2025-09-21 13:34:38] TIMING: Audio extraction (stream 0) completed in 63.515074878s
+[2025-09-21 13:34:38] FILE INFO: Extracted audio stream 0 - Size: 2699849842 bytes (14061.717333s duration)
+[2025-09-21 13:34:38] STORAGE: After audio extraction (stream 0) - Current: 12412538258 bytes, Peak: 12412538258 bytes
+[2025-09-21 13:34:38] Starting Demucs processing for stream 0
+[2025-09-21 13:46:42] TIMING: Demucs processing (stream 0) completed in 723.636118283s
+[2025-09-21 13:46:42] STORAGE: After Demucs (stream 0) - Current: 13934450578 bytes, Peak: 13934450578 bytes
+[2025-09-21 13:46:42] FILE INFO: Demucs output: funger1_audio0_vocals.wav - Size: 760956160 bytes (7926.625854s duration)
+[2025-09-21 13:46:42] FILE INFO: Demucs output: funger1_audio0_nonvocals.wav - Size: 760956160 bytes (7926.625854s duration)
+[2025-09-21 13:46:42] Processing funger1_audio0_vocals - creating variants and features
+[2025-09-21 13:47:28] TIMING: Audio variants creation (funger1_audio0_vocals) completed in 45.414588786s
+[2025-09-21 13:47:28] Starting vocal processing for funger1_audio0_vocals
+[2025-09-21 13:47:34] TIMING: Feature extraction (rms) completed in 6.170614273s
+[2025-09-21 13:47:40] TIMING: Feature extraction (zcr) completed in 5.987154046s
+[2025-09-21 14:02:39] TIMING: Feature extraction (pitch) completed in 899.127665275s
+[2025-09-21 14:03:18] TIMING: Feature extraction (spectral) completed in 39.339474583s
+[2025-09-21 14:03:37] TIMING: Feature extraction (formant) completed in 18.362288024s
+[2025-09-21 14:03:37] TIMING: Feature extraction (jitter) completed in .009766702s
+[2025-09-21 14:07:09] TIMING: CSV post-processing (funger1_audio0_vocals) completed in 212.638188916s
+[2025-09-21 14:07:10] Starting emotion processing for funger1_audio0_vocals
+[2025-09-21 14:08:57] TIMING: Emotion processing (funger1_audio0_vocals) completed in 107.299520461s
+[2025-09-21 14:08:57] Starting transcript processing for funger1_audio0_vocals
+[2025-09-21 14:18:22] TIMING: Transcript processing (funger1_audio0_vocals) completed in 565.527173250s
+[2025-09-21 14:18:22] TIMING: Complete vocal processing (funger1_audio0_vocals) completed in 1854.575603635s
+[2025-09-21 14:18:22] TIMING: Complete processing (funger1_audio0_vocals) completed in 1900.023101662s
+[2025-09-21 14:18:22] STORAGE: After processing funger1_audio0_vocals - Current: 16137354608 bytes, Peak: 16137354608 bytes
+[2025-09-21 14:18:23] Processing funger1_audio0_nonvocals - creating variants and features
+[2025-09-21 14:26:22] ERROR: Failed to create 16kHz variant for ./../temp/funger1_audio0_nonvocals.wav

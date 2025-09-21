@@ -1,0 +1,78 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 3
+Started: Sat Sep 20 10:06:57 EDT 2025
+Input: ./../temp/funger1.mp4
+GUI Overlay: false
+
+[2025-09-20 10:06:57] === INITIALIZATION ===
+[2025-09-20 10:06:57] FILE INFO: Input file - Size: 9195478118 bytes (14061.846333s duration)
+[2025-09-20 10:06:57] TIMING: Initialization completed in .526838768s
+[2025-09-20 10:06:57] === AUDIO TRACK PROCESSING START ===
+[2025-09-20 10:06:57] Found 1 audio stream(s)
+[2025-09-20 10:06:57] === Processing Audio Stream 0 ===
+[2025-09-20 10:06:57] Starting silence detection for stream 0
+[2025-09-20 10:08:00] TIMING: Silence detection (stream 0) completed in 62.892728567s
+[2025-09-20 10:08:00] Silence analysis: 237 segments, 7% of 14061s total
+[2025-09-20 10:08:00] Extracting audio stream 0
+[2025-09-20 10:09:01] TIMING: Audio extraction (stream 0) completed in 60.823243230s
+[2025-09-20 10:09:01] FILE INFO: Extracted audio stream 0 - Size: 2699849842 bytes (14061.717333s duration)
+[2025-09-20 10:09:01] STORAGE: After audio extraction (stream 0) - Current: 11895327960 bytes, Peak: 11895327960 bytes
+[2025-09-20 10:09:01] Starting Demucs processing for stream 0
+[2025-09-20 10:20:18] TIMING: Demucs processing (stream 0) completed in 676.582495780s
+[2025-09-20 10:20:18] STORAGE: After Demucs (stream 0) - Current: 13417240280 bytes, Peak: 13417240280 bytes
+[2025-09-20 10:20:18] FILE INFO: Demucs output: funger1_audio0_vocals.wav - Size: 760956160 bytes (7926.625854s duration)
+[2025-09-20 10:20:18] FILE INFO: Demucs output: funger1_audio0_nonvocals.wav - Size: 760956160 bytes (7926.625854s duration)
+[2025-09-20 10:20:18] Processing funger1_audio0_vocals - creating variants and features
+[2025-09-20 10:21:01] TIMING: Audio variants creation (funger1_audio0_vocals) completed in 42.697755673s
+[2025-09-20 10:21:01] Starting vocal processing for funger1_audio0_vocals
+[2025-09-20 10:21:10] TIMING: Feature extraction (rms) completed in 9.332779628s
+[2025-09-20 10:21:16] TIMING: Feature extraction (zcr) completed in 5.581617564s
+[2025-09-20 10:32:30] TIMING: Feature extraction (pitch) completed in 674.039872079s
+[2025-09-20 10:33:07] TIMING: Feature extraction (spectral) completed in 37.237908126s
+[2025-09-20 10:33:24] TIMING: Feature extraction (formant) completed in 17.164968041s
+[2025-09-20 10:33:24] TIMING: Feature extraction (jitter) completed in .008555914s
+[2025-09-20 10:36:56] TIMING: CSV post-processing (funger1_audio0_vocals) completed in 211.434156505s
+[2025-09-20 10:36:56] Starting emotion processing for funger1_audio0_vocals
+[2025-09-20 10:38:26] TIMING: Emotion processing (funger1_audio0_vocals) completed in 90.296050090s
+[2025-09-20 10:38:26] Starting transcript processing for funger1_audio0_vocals
+[2025-09-20 10:46:08] TIMING: Transcript processing (funger1_audio0_vocals) completed in 462.386700351s
+[2025-09-20 10:46:08] TIMING: Complete vocal processing (funger1_audio0_vocals) completed in 1507.584442774s
+[2025-09-20 10:46:08] TIMING: Complete processing (funger1_audio0_vocals) completed in 1550.313065855s
+[2025-09-20 10:46:09] STORAGE: After processing funger1_audio0_vocals - Current: 15620077478 bytes, Peak: 15620077478 bytes
+[2025-09-20 10:46:09] Processing funger1_audio0_nonvocals - creating variants and features
+[2025-09-20 10:46:54] TIMING: Audio variants creation (funger1_audio0_nonvocals) completed in 45.491323409s
+[2025-09-20 10:46:54] Starting nonvocal processing for funger1_audio0_nonvocals
+[2025-09-20 10:47:00] TIMING: Feature extraction (rms) completed in 5.910023823s
+[2025-09-20 10:47:06] TIMING: Feature extraction (zcr) completed in 5.461166245s
+[2025-09-20 10:47:43] TIMING: Feature extraction (spectral) completed in 37.253595335s
+[2025-09-20 10:51:11] TIMING: Complete nonvocal processing (funger1_audio0_nonvocals) completed in 256.716668712s
+[2025-09-20 10:51:11] TIMING: Complete processing (funger1_audio0_nonvocals) completed in 302.240731387s
+[2025-09-20 10:51:11] STORAGE: After processing funger1_audio0_nonvocals - Current: 15018058592 bytes, Peak: 15620077478 bytes
+[2025-09-20 10:51:11] TIMING: Complete audio stream 0 processing completed in 2654.072693002s
+[2025-09-20 10:51:12] TIMING: All audio processing completed in 2654.337479313s
+[2025-09-20 10:51:12] === CSV MERGING START ===
+[2025-09-20 10:51:12] Merging CSVs for funger1_audio0_vocals
+[2025-09-20 10:51:33] TIMING: CSV merge (funger1_audio0_vocals) completed in 21.230843261s
+[2025-09-20 10:51:33] FILE INFO: Merged CSV: funger1_audio0_vocals - Size: 331114510 bytes
+[2025-09-20 10:51:33] Merging CSVs for funger1_audio0_nonvocals
+[2025-09-20 10:51:42] TIMING: CSV merge (funger1_audio0_nonvocals) completed in 8.771208642s
+[2025-09-20 10:51:42] FILE INFO: Merged CSV: funger1_audio0_nonvocals - Size: 147006777 bytes
+[2025-09-20 10:51:42] TIMING: All CSV merging completed in 30.052958824s
+[2025-09-20 10:51:42] STORAGE: After CSV merging - Current: 9673599405 bytes, Peak: 15620077478 bytes
+[2025-09-20 10:51:42] === VIDEO PROCESSING START ===
+[2025-09-20 10:51:42] Found 1 video stream(s)
+[2025-09-20 10:51:42] Processing Video Stream 0
+[2025-09-20 10:56:14] TIMING: Video encoding (stream 0) completed in 272.130111000s
+[2025-09-20 10:56:14] FILE INFO: Encoded video stream 0 - Size: 210504933 bytes (14061.866667s duration)
+[2025-09-20 10:56:14] Starting DeepGaze processing for video stream 0
+[2025-09-20 11:18:40] Processing salience CSV for stream 0
+[2025-09-20 11:18:54] TIMING: Salience processing (stream 0) completed in 14.653257480s
+[2025-09-20 11:18:54] FILE INFO: Salience engagement: stream 0 - Size: 39089011 bytes
+[2025-09-20 11:18:54] TIMING: DeepGaze processing (stream 0) completed in 1360.055046956s
+[2025-09-20 11:18:54] TIMING: Complete video stream 0 processing completed in 1632.332749979s
+[2025-09-20 11:18:54] STORAGE: After video processing (stream 0) - Current: 9923193349 bytes, Peak: 15620077478 bytes
+[2025-09-20 11:18:54] TIMING: All video processing completed in 1632.682537075s
+[2025-09-20 11:18:54] === FINALIZATION START ===
+[2025-09-20 11:18:54] Available files for finalization: Vocals=1, Nonvocals=1, Video=1
+[2025-09-20 11:18:54] Selected files: vocals=./../temp/funger1_audio0_vocals_merged.csv, nonvocals=./../temp/funger1_audio0_nonvocals_merged.csv, video=./../temp/funger1_video0_salience_engagement.csv
+[2025-09-20 11:18:54] Attempting full finalization strategy
