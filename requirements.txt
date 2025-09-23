@@ -1,0 +1,9 @@
+sudo apt install -y \
+  libavcodec-dev \
+  libavformat-dev \
+  libavdevice-dev \
+  libavfilter-dev \
+  libavutil-dev \
+  libswscale-dev \
+  libswresample-dev \
+  pkg-config

@@ -829,9 +829,9 @@ if [ "$FINALIZE_SUCCESS" = true ] && [ -f "$FINALIZED_OUT" ]; then
     
     if python clip_detect.py "$FINALIZED_OUT" \
         --output "$CLIP_OUT" \
-        --min-integral 3\
+        --min-integral 2\
         --min-duration 7 \
-        --sustained-threshold 80 \
+        --sustained-threshold 60 \
         --sustained-min-duration 20
         2>/dev/null; then
         if [ -f "$CLIP_OUT" ]; then
