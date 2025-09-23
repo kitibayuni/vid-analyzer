@@ -1,45 +1,47 @@
-use csv::{ReaderBuilder, WriterBuilder};
+use csv::{ReaderBuilder, WriterBuilder, StringRecord};
 use ordered_float::OrderedFloat;
 use rayon::prelude::*;
 use std::collections::{HashMap, BTreeSet};
 use std::env;
 use std::error::Error;
 
-/// Struct to store CSV data
+/// Struct to store CSV data with original string values
 #[derive(Debug)]
 struct CsvData {
     headers: Vec<String>,
-    rows: Vec<HashMap<String, f64>>,
+    rows: Vec<StringRecord>,
+    time_index: usize,
 }
 
-/// Read CSV into structured format
+/// Read CSV into structured format preserving original strings
 fn read_csv(path: &str, time_col: &str) -> Result<CsvData, Box<dyn Error>> {
     let mut rdr = ReaderBuilder::new().from_path(path)?;
-    let headers: Vec<String> = rdr.headers()?.iter().map(|h| h.to_string()).collect();
+    let headers_record = rdr.headers()?.clone();
+    let headers: Vec<String> = headers_record.iter().map(|h| h.to_string()).collect();
 
-    if !headers.contains(&time_col.to_string()) {
-        return Err(format!("Time column '{}' not found in {}", time_col, path).into());
-    }
+    let time_index = headers.iter().position(|h| h == time_col)
+        .ok_or_else(|| format!("Time column '{}' not found in {}", time_col, path))?;
 
     let mut rows = Vec::new();
     for result in rdr.records() {
         let record = result?;
-        let mut row_map = HashMap::new();
-        for (h, v) in headers.iter().zip(record.iter()) {
-            if let Ok(val) = v.parse::<f64>() {
-                row_map.insert(h.clone(), val);
-            }
-        }
-        rows.push(row_map);
+        rows.push(record);
     }
 
-    Ok(CsvData { headers, rows })
+    println!("[INFO] Read {} rows from {}", rows.len(), path);
+    Ok(CsvData { headers, rows, time_index })
+}
+
+/// Parse time value from string, handling potential errors gracefully
+fn parse_time(time_str: &str) -> Option<f64> {
+    time_str.trim().parse::<f64>().ok()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 {
         eprintln!("Usage: {} <time_column> <output.csv> <input1.csv> <input2.csv> ...", args[0]);
+        eprintln!("This script merges multiple CSVs on a time column while preserving data fidelity");
         std::process::exit(1);
     }
 
@@ -47,23 +49,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     let output_path = &args[2];
     let input_files: Vec<_> = args[3..].to_vec();
 
+    println!("[INFO] Merging {} CSV files on time column '{}'", input_files.len(), time_col);
+
     // Read all CSVs
     let datasets: Vec<CsvData> = input_files
         .iter()
-        .map(|f| read_csv(f, time_col))
+        .map(|f| {
+            println!("[INFO] Reading {}", f);
+            read_csv(f, time_col)
+        })
         .collect::<Result<_, _>>()?;
 
     // Collect all unique times across all CSVs
     let mut all_times = BTreeSet::new();
     for d in &datasets {
-        for r in &d.rows {
-            if let Some(&t) = r.get(time_col) {
-                all_times.insert(OrderedFloat(t));
+        for row in &d.rows {
+            if let Some(time_str) = row.get(d.time_index) {
+                if let Some(time_val) = parse_time(time_str) {
+                    all_times.insert(OrderedFloat(time_val));
+                }
             }
         }
     }
 
-    // Detect duplicates across CSVs
+    println!("[INFO] Found {} unique time points", all_times.len());
+
+    // Detect duplicate column names across CSVs (excluding time column)
     let mut col_counts: HashMap<String, usize> = HashMap::new();
     for d in &datasets {
         for h in &d.headers {
@@ -73,7 +84,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Prepare global header
+    // Build global header with duplicate handling
     let mut all_headers = vec![time_col.to_string()];
     let mut dup_counters: HashMap<String, usize> = HashMap::new();
 
@@ -98,52 +109,92 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Pre-index CSVs by time for fast lookup
-    let indexed: Vec<HashMap<OrderedFloat<f64>, &HashMap<String,f64>>> = datasets
+    // Pre-index CSVs by time for fast lookup, preserving original strings
+    let indexed: Vec<HashMap<OrderedFloat<f64>, &StringRecord>> = datasets
         .iter()
         .map(|d| {
             d.rows
                 .iter()
-                .filter_map(|r| r.get(time_col).map(|&t| (OrderedFloat(t), r)))
+                .filter_map(|row| {
+                    if let Some(time_str) = row.get(d.time_index) {
+                        if let Some(time_val) = parse_time(time_str) {
+                            return Some((OrderedFloat(time_val), row));
+                        }
+                    }
+                    None
+                })
                 .collect()
         })
         .collect();
 
-    // Parallel assembly of rows
-    let rows: Vec<Vec<String>> = all_times
+    // Parallel assembly of rows - preserving original string values
+    let rows: Vec<StringRecord> = all_times
         .par_iter()
-        .map(|&OrderedFloat(time_val)| {
-            let mut row: Vec<String> = Vec::new();
-            row.push(format!("{:.6}", time_val));
+        .map(|&ordered_time| {
+            let time_val = ordered_time.0;
+            let mut row_fields: Vec<String> = Vec::new();
+            
+            // Add time value - format consistently to avoid precision issues
+            row_fields.push(format!("{:.6}", time_val));
 
-            for (i, d) in datasets.iter().enumerate() {
-                for h in &d.headers {
+            // Add data from each dataset
+            for (dataset_idx, d) in datasets.iter().enumerate() {
+                for (col_idx, h) in d.headers.iter().enumerate() {
                     if h == time_col { continue; }
-                    let val_str = if let Some(r) = indexed[i].get(&OrderedFloat(time_val)) {
-                        if let Some(val) = r.get(h) {
-                            format!("{:.6}", val)
-                        } else {
-                            "".to_string()
-                        }
+
+                    // Look up the row for this time point
+                    let field_value = if let Some(source_row) = indexed[dataset_idx].get(&ordered_time) {
+                        // Preserve original string value
+                        source_row.get(col_idx)
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| String::new())
                     } else {
-                        "".to_string()
+                        // No data at this time point
+                        String::new()
                     };
-                    row.push(val_str);
+
+                    row_fields.push(field_value);
                 }
             }
 
-            row
+            // Create StringRecord from fields
+            let mut record = StringRecord::new();
+            for field in row_fields {
+                record.push_field(&field);
+            }
+            record
         })
         .collect();
 
+    println!("[INFO] Assembled {} merged rows", rows.len());
+
     // Write output CSV
     let mut wtr = WriterBuilder::new().from_path(output_path)?;
-    wtr.write_record(&all_headers)?;
-    for r in rows {
-        wtr.write_record(&r)?;
+    
+    // Write header
+    let mut header_record = StringRecord::new();
+    for header in &all_headers {
+        header_record.push_field(header);
     }
+    wtr.write_record(&header_record)?;
+
+    // Write data rows
+    for row in &rows {
+        wtr.write_record(row)?;
+    }
+    
     wtr.flush()?;
 
-    println!("Output written to {}", output_path);
+    println!("✅ Merged CSV written to: {}", output_path);
+    println!("[INFO] Final dimensions: {} columns × {} rows", all_headers.len(), rows.len());
+    
+    // Print summary of duplicates handled
+    if !dup_counters.is_empty() {
+        println!("[INFO] Duplicate columns renamed:");
+        for (orig, count) in &dup_counters {
+            println!("  {} appeared in {} files", orig, count);
+        }
+    }
+
     Ok(())
 }

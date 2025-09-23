@@ -1,0 +1,32 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 21
+Started: Tue Sep 23 13:19:12 EDT 2025
+Input: ./../temp/parts.mp4
+GUI Overlay: false
+
+[2025-09-23 13:19:12] === INITIALIZATION ===
+[2025-09-23 13:19:12] FILE INFO: Input file - Size: 2387571895 bytes (3600.113333s duration)
+[2025-09-23 13:19:12] TIMING: Initialization completed in .164992239s
+[2025-09-23 13:19:12] === AUDIO TRACK PROCESSING START ===
+[2025-09-23 13:19:13] Found 1 audio stream(s)
+[2025-09-23 13:19:13] === Processing Audio Stream 0 ===
+[2025-09-23 13:19:13] Starting silence detection for stream 0
+[2025-09-23 13:19:29] TIMING: Silence detection (stream 0) completed in 16.825640455s
+[2025-09-23 13:19:29] Silence analysis: 93 segments, 6% of 3600s total
+[2025-09-23 13:19:29] Extracting audio stream 0
+[2025-09-23 13:19:46] TIMING: Audio extraction (stream 0) completed in 16.602169831s
+[2025-09-23 13:19:46] FILE INFO: Extracted audio stream 0 - Size: 691200114 bytes (3600.000000s duration)
+[2025-09-23 13:19:46] STORAGE: After audio extraction (stream 0) - Current: 4203366690 bytes, Peak: 4203366690 bytes
+[2025-09-23 13:19:46] Starting Demucs processing for stream 0
+[2025-09-23 13:19:46] ERROR: Demucs processing failed for ./../temp/parts_audio0.wav
+[2025-09-23 13:19:46] TIMING: All audio processing completed in 34.029505525s
+[2025-09-23 13:19:46] === CSV MERGING START ===
+[2025-09-23 13:19:46] No CSVs to merge for parts_audio0_vocals
+[2025-09-23 13:19:47] No CSVs to merge for parts_audio0_nonvocals
+[2025-09-23 13:19:47] TIMING: All CSV merging completed in .033381668s
+[2025-09-23 13:19:47] STORAGE: After CSV merging - Current: 4203366690 bytes, Peak: 4203366690 bytes
+[2025-09-23 13:19:47] === VIDEO PROCESSING START ===
+[2025-09-23 13:19:47] Found 1 video stream(s)
+[2025-09-23 13:19:47] Processing Video Stream 0
+[2025-09-23 13:20:11] TIMING: Video encoding (stream 0) completed in 23.779655591s
+[2025-09-23 13:20:11] FILE INFO: Encoded video stream 0 - Size: 18430908 bytes (1286.000000s duration)

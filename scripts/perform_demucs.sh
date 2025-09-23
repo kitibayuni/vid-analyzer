@@ -155,52 +155,58 @@ SEPDIR=$(find "${WORKDIR}/separated" -maxdepth 1 -type d -name "${MODEL}*" | hea
 stitch_stem_fast() {
     local stem="$1"
     echo ">>> Fast stitching stem: $stem"
-    
-    # Create list file for concat
+
     local list_file="${OUTDIR}/${stem}_list.txt"
     > "$list_file"
-    
+
     local has_files=false
     for f in "${CHUNKS_DIR}"/chunk_*.wav; do
         name=$(basename "$f" .wav)
         stem_file="${SEPDIR}/${name}/${stem}.wav"
-        
+
         if [ -f "$stem_file" ] && [ -s "$stem_file" ]; then
-            # Trim overlap from all chunks except the first
+            # Normalize stem to consistent format before stitching
+            normalized="${OUTDIR}/${name}_${stem}_norm.wav"
+            ffmpeg -y -hide_banner -loglevel error \
+                -i "$stem_file" \
+                -ar "$SAMPLE_RATE" -ac 1 -c:a pcm_s16le \
+                "$normalized"
+
+            # Trim overlap if not the first chunk
             if [ "$has_files" = true ]; then
-                # Create trimmed version
-                local trimmed="${OUTDIR}/${name}_${stem}_trimmed.wav"
+                trimmed="${OUTDIR}/${name}_${stem}_trimmed.wav"
                 ffmpeg -y -hide_banner -loglevel error \
-                    -i "$stem_file" \
+                    -i "$normalized" \
                     -ss "$OVERLAP" \
                     -ar "$SAMPLE_RATE" -ac 1 -c:a pcm_s16le \
                     "$trimmed"
                 echo "file '$(realpath "$trimmed")'" >> "$list_file"
+                rm -f "$normalized"
             else
-                echo "file '$(realpath "$stem_file")'" >> "$list_file"
+                echo "file '$(realpath "$normalized")'" >> "$list_file"
                 has_files=true
             fi
         fi
     done
-    
+
     if [ "$has_files" = false ]; then
         echo "Error: No valid $stem files found."
         return 1
     fi
-    
-    # Fast concatenation
+
     local stitched="${OUTDIR}/${stem}.wav"
     ffmpeg -y -hide_banner -loglevel error \
         -f concat -safe 0 -i "$list_file" \
         -ar "$SAMPLE_RATE" -ac 1 -c:a pcm_s16le \
         "$stitched"
-    
+
     # Clean up temp files
-    rm -f "${OUTDIR}"/*_trimmed.wav "$list_file"
-    
+    rm -f "${OUTDIR}"/*_trimmed.wav "${OUTDIR}"/*_norm.wav "$list_file"
+
     [ -s "$stitched" ] || { echo "Error: stitching failed for $stem"; return 1; }
     echo "✓ Completed stitching: $stem"
 }
+
 
 # --- Crossfade stitching (slower but smoother) ---
 stitch_stem_crossfade() {

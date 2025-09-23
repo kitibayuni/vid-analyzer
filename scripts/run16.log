@@ -1,0 +1,29 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 16
+Started: Tue Sep 23 12:27:31 EDT 2025
+Input: ./../temp/parts.mp4
+GUI Overlay: false
+
+[2025-09-23 12:27:31] === INITIALIZATION ===
+[2025-09-23 12:27:31] FILE INFO: Input file - Size: 2387571895 bytes (3600.113333s duration)
+[2025-09-23 12:27:31] TIMING: Initialization completed in .171102993s
+[2025-09-23 12:27:32] === AUDIO TRACK PROCESSING START ===
+[2025-09-23 12:27:32] Found 1 audio stream(s)
+[2025-09-23 12:27:32] === Processing Audio Stream 0 ===
+[2025-09-23 12:27:32] Starting silence detection for stream 0
+[2025-09-23 12:27:49] TIMING: Silence detection (stream 0) completed in 17.001326541s
+[2025-09-23 12:27:49] Silence analysis: 93 segments, 6% of 3600s total
+[2025-09-23 12:27:49] Extracting audio stream 0
+[2025-09-23 12:28:05] TIMING: Audio extraction (stream 0) completed in 16.429998525s
+[2025-09-23 12:28:05] FILE INFO: Extracted audio stream 0 - Size: 691200114 bytes (3600.000000s duration)
+[2025-09-23 12:28:05] STORAGE: After audio extraction (stream 0) - Current: 3079211598 bytes, Peak: 3079211598 bytes
+[2025-09-23 12:28:05] Starting Demucs processing for stream 0
+[2025-09-23 12:30:52] TIMING: Demucs processing (stream 0) completed in 166.913736208s
+[2025-09-23 12:30:52] STORAGE: After Demucs (stream 0) - Current: 3508056166 bytes, Peak: 3508056166 bytes
+[2025-09-23 12:30:52] FILE INFO: Demucs output: parts_audio0_vocals.wav - Size: 214422284 bytes (2233.564646s duration)
+[2025-09-23 12:30:52] FILE INFO: Demucs output: parts_audio0_nonvocals.wav - Size: 214422284 bytes (2233.564646s duration)
+[2025-09-23 12:30:52] Processing parts_audio0_vocals - creating variants and features
+[2025-09-23 12:31:06] TIMING: Audio variants creation (parts_audio0_vocals) completed in 13.235473844s
+[2025-09-23 12:31:06] Starting vocal processing for parts_audio0_vocals
+[2025-09-23 12:31:08] TIMING: Feature extraction (rms) completed in 1.883291468s
+[2025-09-23 12:31:09] TIMING: Feature extraction (zcr) completed in 1.771170461s

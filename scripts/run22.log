@@ -1,0 +1,101 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 22
+Started: Tue Sep 23 13:54:20 EDT 2025
+Input: ./../temp/parts.mp4
+GUI Overlay: false
+
+[2025-09-23 13:54:20] === INITIALIZATION ===
+[2025-09-23 13:54:20] FILE INFO: Input file - Size: 2387571895 bytes (3600.113333s duration)
+[2025-09-23 13:54:20] TIMING: Initialization completed in .180580458s
+[2025-09-23 13:54:20] === AUDIO TRACK PROCESSING START ===
+[2025-09-23 13:54:20] Found 1 audio stream(s)
+[2025-09-23 13:54:20] === Processing Audio Stream 0 ===
+[2025-09-23 13:54:20] Starting silence detection for stream 0
+[2025-09-23 13:54:37] TIMING: Silence detection (stream 0) completed in 17.248327973s
+[2025-09-23 13:54:37] Silence analysis: 91 segments, 6% of 3600s total
+[2025-09-23 13:54:37] Extracting audio stream 0
+[2025-09-23 13:54:55] TIMING: Audio extraction (stream 0) completed in 17.112255362s
+[2025-09-23 13:54:55] FILE INFO: Extracted audio stream 0 - Size: 691200114 bytes (3600.000000s duration)
+[2025-09-23 13:54:55] STORAGE: After audio extraction (stream 0) - Current: 4203366690 bytes, Peak: 4203366690 bytes
+[2025-09-23 13:54:55] Starting Demucs processing for stream 0
+[2025-09-23 13:58:00] TIMING: Demucs processing (stream 0) completed in 185.219296868s
+[2025-09-23 13:58:00] STORAGE: After Demucs (stream 0) - Current: 4894566846 bytes, Peak: 4894566846 bytes
+[2025-09-23 13:58:00] FILE INFO: Demucs output: parts_audio0_vocals.wav - Size: 345600078 bytes (3600.000000s duration)
+[2025-09-23 13:58:00] FILE INFO: Demucs output: parts_audio0_nonvocals.wav - Size: 345600078 bytes (3600.000000s duration)
+[2025-09-23 13:58:00] Processing parts_audio0_vocals - creating variants and features
+[2025-09-23 13:58:22] TIMING: Audio variants creation (parts_audio0_vocals) completed in 21.317834023s
+[2025-09-23 13:58:22] Starting vocal processing for parts_audio0_vocals
+[2025-09-23 13:58:25] TIMING: Feature extraction (rms) completed in 3.057417014s
+[2025-09-23 13:58:28] TIMING: Feature extraction (zcr) completed in 2.860248662s
+[2025-09-23 14:04:52] TIMING: Feature extraction (pitch) completed in 384.262543346s
+[2025-09-23 14:05:10] TIMING: Feature extraction (spectral) completed in 17.825392385s
+[2025-09-23 14:05:18] TIMING: Feature extraction (formant) completed in 8.832533445s
+[2025-09-23 14:05:18] TIMING: Feature extraction (jitter) completed in .010289868s
+[2025-09-23 14:06:04] TIMING: CSV post-processing (parts_audio0_vocals) completed in 45.884513003s
+[2025-09-23 14:06:04] Starting emotion processing for parts_audio0_vocals
+[2025-09-23 14:07:35] TIMING: Emotion processing (parts_audio0_vocals) completed in 90.228332512s
+[2025-09-23 14:07:35] Starting transcript processing for parts_audio0_vocals
+[2025-09-23 14:09:42] TIMING: Transcript processing (parts_audio0_vocals) completed in 127.699583449s
+[2025-09-23 14:09:42] TIMING: Complete vocal processing (parts_audio0_vocals) completed in 680.779026768s
+[2025-09-23 14:09:42] TIMING: Complete processing (parts_audio0_vocals) completed in 702.131391540s
+[2025-09-23 14:09:42] STORAGE: After processing parts_audio0_vocals - Current: 5894692601 bytes, Peak: 5894692601 bytes
+[2025-09-23 14:09:43] Processing parts_audio0_nonvocals - creating variants and features
+[2025-09-23 14:10:05] TIMING: Audio variants creation (parts_audio0_nonvocals) completed in 22.135716787s
+[2025-09-23 14:10:05] Starting nonvocal processing for parts_audio0_nonvocals
+[2025-09-23 14:10:08] TIMING: Feature extraction (rms) completed in 2.883730353s
+[2025-09-23 14:10:10] TIMING: Feature extraction (zcr) completed in 2.713242220s
+[2025-09-23 14:10:27] TIMING: Feature extraction (spectral) completed in 16.562515918s
+[2025-09-23 14:11:12] TIMING: Complete nonvocal processing (parts_audio0_nonvocals) completed in 67.584103609s
+[2025-09-23 14:11:12] TIMING: Complete processing (parts_audio0_nonvocals) completed in 89.754822284s
+[2025-09-23 14:11:13] STORAGE: After processing parts_audio0_nonvocals - Current: 5620942779 bytes, Peak: 5894692601 bytes
+[2025-09-23 14:11:13] TIMING: Complete audio stream 0 processing completed in 1012.631982301s
+[2025-09-23 14:11:13] TIMING: All audio processing completed in 1012.796206552s
+[2025-09-23 14:11:13] === CSV MERGING START ===
+[2025-09-23 14:11:13] Merging CSVs for parts_audio0_vocals
+[2025-09-23 14:11:19] TIMING: CSV merge (parts_audio0_vocals) completed in 5.869253971s
+[2025-09-23 14:11:19] FILE INFO: Merged CSV: parts_audio0_vocals - Size: 158698442 bytes
+[2025-09-23 14:11:19] Merging CSVs for parts_audio0_nonvocals
+[2025-09-23 14:11:22] TIMING: CSV merge (parts_audio0_nonvocals) completed in 2.968463453s
+[2025-09-23 14:11:22] FILE INFO: Merged CSV: parts_audio0_nonvocals - Size: 78441987 bytes
+[2025-09-23 14:11:22] TIMING: All CSV merging completed in 8.892091761s
+[2025-09-23 14:11:22] STORAGE: After CSV merging - Current: 3749307005 bytes, Peak: 5894692601 bytes
+[2025-09-23 14:11:22] === VIDEO PROCESSING START ===
+[2025-09-23 14:11:22] Found 1 video stream(s)
+[2025-09-23 14:11:22] Processing Video Stream 0
+[2025-09-23 14:12:30] TIMING: Video encoding (stream 0) completed in 68.201215588s
+[2025-09-23 14:12:30] FILE INFO: Encoded video stream 0 - Size: 49705928 bytes (3600.133333s duration)
+[2025-09-23 14:12:30] Starting DeepGaze processing for video stream 0
+[2025-09-23 14:18:44] Processing salience CSV for stream 0
+[2025-09-23 14:18:45] TIMING: Salience processing (stream 0) completed in 1.341329178s
+[2025-09-23 14:18:45] FILE INFO: Salience engagement: stream 0 - Size: 9987529 bytes
+[2025-09-23 14:18:45] TIMING: DeepGaze processing (stream 0) completed in 374.965558426s
+[2025-09-23 14:18:45] TIMING: Complete video stream 0 processing completed in 443.305145482s
+[2025-09-23 14:18:45] STORAGE: After video processing (stream 0) - Current: 3809000462 bytes, Peak: 5894692601 bytes
+[2025-09-23 14:18:45] TIMING: All video processing completed in 443.562927067s
+[2025-09-23 14:18:45] === FINALIZATION START ===
+[2025-09-23 14:18:45] Available files for finalization: Vocals=1, Nonvocals=1, Video=1
+[2025-09-23 14:18:45] Selected files: vocals=./../temp/parts_audio0_vocals_merged.csv, nonvocals=./../temp/parts_audio0_nonvocals_merged.csv, video=./../temp/parts_video0_salience_engagement.csv
+[2025-09-23 14:18:45] Attempting full finalization strategy
+[2025-09-23 14:21:03] TIMING: Full finalization completed in 137.453234344s
+[2025-09-23 14:21:03] FILE INFO: Finalized output (full) - Size: 275957792 bytes
+[2025-09-23 14:21:03] TIMING: Finalization process completed in 137.532354481s
+[2025-09-23 14:21:03] Starting clip detection on ./../temp/parts_finalized.csv
+[2025-09-23 14:21:11] ERROR: Clip detection script ran but no output file was created
+[2025-09-23 14:21:11] Skipping GUI overlay generation (not requested via --gui-overlay flag)
+[2025-09-23 14:21:11] === FINAL SUMMARY ===
+[2025-09-23 14:21:11] Total runtime: 1611.339085830s
+[2025-09-23 14:21:11] Peak storage usage: 5894692601 bytes
+[2025-09-23 14:21:11] STORAGE: Final - Current: 4035730174 bytes, Peak: 5894692601 bytes
+
+=== EXECUTION SUMMARY ===
+Script completed at: Tue Sep 23 14:21:11 EDT 2025
+Total execution time: 1611.339085830s
+Peak storage usage: 5894692601 bytes
+Input file: ./../temp/parts.mp4
+Audio streams processed: 1
+Video streams processed: 1
+Finalization successful: true
+Clip detection successful: false
+GUI overlay enabled: false
+Output directory: ./../temp
+Final CSV: ./../temp/parts_finalized.csv

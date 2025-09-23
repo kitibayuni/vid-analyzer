@@ -1,0 +1,64 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 17
+Started: Tue Sep 23 12:56:42 EDT 2025
+Input: ./../temp/parts.mp4
+GUI Overlay: false
+
+[2025-09-23 12:56:42] === INITIALIZATION ===
+[2025-09-23 12:56:42] FILE INFO: Input file - Size: 2387571895 bytes (3600.113333s duration)
+[2025-09-23 12:56:42] TIMING: Initialization completed in .473814063s
+[2025-09-23 12:56:42] === AUDIO TRACK PROCESSING START ===
+[2025-09-23 12:56:42] Found 1 audio stream(s)
+[2025-09-23 12:56:42] === Processing Audio Stream 0 ===
+[2025-09-23 12:56:42] Starting silence detection for stream 0
+[2025-09-23 12:57:00] TIMING: Silence detection (stream 0) completed in 17.494844481s
+[2025-09-23 12:57:00] Silence analysis: 93 segments, 6% of 3600s total
+[2025-09-23 12:57:00] Extracting audio stream 0
+[2025-09-23 12:57:17] TIMING: Audio extraction (stream 0) completed in 16.787115885s
+[2025-09-23 12:57:17] FILE INFO: Extracted audio stream 0 - Size: 691200114 bytes (3600.000000s duration)
+[2025-09-23 12:57:17] STORAGE: After audio extraction (stream 0) - Current: 3512166576 bytes, Peak: 3512166576 bytes
+[2025-09-23 12:57:17] Starting Demucs processing for stream 0
+[2025-09-23 12:57:17] ERROR: Demucs processing failed for ./../temp/parts_audio0.wav
+[2025-09-23 12:57:17] TIMING: All audio processing completed in 34.910121585s
+[2025-09-23 12:57:17] === CSV MERGING START ===
+[2025-09-23 12:57:17] No CSVs to merge for parts_audio0_vocals
+[2025-09-23 12:57:17] No CSVs to merge for parts_audio0_nonvocals
+[2025-09-23 12:57:17] TIMING: All CSV merging completed in .034336853s
+[2025-09-23 12:57:17] STORAGE: After CSV merging - Current: 3512166576 bytes, Peak: 3512166576 bytes
+[2025-09-23 12:57:17] === VIDEO PROCESSING START ===
+[2025-09-23 12:57:17] Found 1 video stream(s)
+[2025-09-23 12:57:17] Processing Video Stream 0
+[2025-09-23 12:58:26] TIMING: Video encoding (stream 0) completed in 68.617829506s
+[2025-09-23 12:58:26] FILE INFO: Encoded video stream 0 - Size: 49705928 bytes (3600.133333s duration)
+[2025-09-23 12:58:26] Starting DeepGaze processing for video stream 0
+[2025-09-23 13:04:42] Processing salience CSV for stream 0
+[2025-09-23 13:04:43] TIMING: Salience processing (stream 0) completed in 1.356981147s
+[2025-09-23 13:04:43] FILE INFO: Salience engagement: stream 0 - Size: 9987529 bytes
+[2025-09-23 13:04:43] TIMING: DeepGaze processing (stream 0) completed in 377.257763106s
+[2025-09-23 13:04:43] TIMING: Complete video stream 0 processing completed in 446.023436774s
+[2025-09-23 13:04:44] STORAGE: After video processing (stream 0) - Current: 4263060147 bytes, Peak: 4263060147 bytes
+[2025-09-23 13:04:44] TIMING: All video processing completed in 446.312099044s
+[2025-09-23 13:04:44] === FINALIZATION START ===
+[2025-09-23 13:04:44] Available files for finalization: Vocals=0, Nonvocals=0, Video=1
+[2025-09-23 13:04:44] Selected files: vocals=./../temp/parts_video0_salience_engagement.csv, nonvocals=NONE, video=NONE
+[2025-09-23 13:04:44] Attempting vocals-only finalization strategy
+[2025-09-23 13:04:44] TIMING: Vocals-only finalization completed in .017865328s
+[2025-09-23 13:04:44] TIMING: Finalization process completed in .109033402s
+[2025-09-23 13:04:44] Skipping clip detection (finalization failed or no data)
+[2025-09-23 13:04:44] Skipping GUI overlay generation (not requested via --gui-overlay flag)
+[2025-09-23 13:04:44] === FINAL SUMMARY ===
+[2025-09-23 13:04:44] Total runtime: 482.064385182s
+[2025-09-23 13:04:44] Peak storage usage: 4263060147 bytes
+[2025-09-23 13:04:44] STORAGE: Final - Current: 4213354219 bytes, Peak: 4263060147 bytes
+
+=== EXECUTION SUMMARY ===
+Script completed at: Tue Sep 23 13:04:44 EDT 2025
+Total execution time: 482.064385182s
+Peak storage usage: 4263060147 bytes
+Input file: ./../temp/parts.mp4
+Audio streams processed: 1
+Video streams processed: 1
+Finalization successful: true
+Clip detection successful: false
+GUI overlay enabled: false
+Output directory: ./../temp

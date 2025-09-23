@@ -1,0 +1,33 @@
+=== MEDIA TRACK EXTRACTOR LOG ===
+Run: 19
+Started: Tue Sep 23 13:10:40 EDT 2025
+Input: ./../temp/parts.mp4
+GUI Overlay: false
+
+[2025-09-23 13:10:40] === INITIALIZATION ===
+[2025-09-23 13:10:40] FILE INFO: Input file - Size: 2387571895 bytes (3600.113333s duration)
+[2025-09-23 13:10:40] TIMING: Initialization completed in .191521051s
+[2025-09-23 13:10:40] === AUDIO TRACK PROCESSING START ===
+[2025-09-23 13:10:40] Found 1 audio stream(s)
+[2025-09-23 13:10:40] === Processing Audio Stream 0 ===
+[2025-09-23 13:10:40] Starting silence detection for stream 0
+[2025-09-23 13:11:02] TIMING: Silence detection (stream 0) completed in 21.219719556s
+[2025-09-23 13:11:02] Silence analysis: 89 segments, 6% of 3600s total
+[2025-09-23 13:11:02] Extracting audio stream 0
+[2025-09-23 13:11:22] TIMING: Audio extraction (stream 0) completed in 20.311828674s
+[2025-09-23 13:11:22] FILE INFO: Extracted audio stream 0 - Size: 691200114 bytes (3600.000000s duration)
+[2025-09-23 13:11:22] STORAGE: After audio extraction (stream 0) - Current: 4203366690 bytes, Peak: 4203366690 bytes
+[2025-09-23 13:11:22] Starting Demucs processing for stream 0
+[2025-09-23 13:11:22] ERROR: Demucs processing failed for ./../temp/parts_audio0.wav
+[2025-09-23 13:11:22] TIMING: All audio processing completed in 42.242330354s
+[2025-09-23 13:11:22] === CSV MERGING START ===
+[2025-09-23 13:11:23] No CSVs to merge for parts_audio0_vocals
+[2025-09-23 13:11:23] No CSVs to merge for parts_audio0_nonvocals
+[2025-09-23 13:11:23] TIMING: All CSV merging completed in .038401080s
+[2025-09-23 13:11:23] STORAGE: After CSV merging - Current: 4203366690 bytes, Peak: 4203366690 bytes
+[2025-09-23 13:11:23] === VIDEO PROCESSING START ===
+[2025-09-23 13:11:23] Found 1 video stream(s)
+[2025-09-23 13:11:23] Processing Video Stream 0
+[2025-09-23 13:12:13] TIMING: Video encoding (stream 0) completed in 49.711714620s
+[2025-09-23 13:12:13] FILE INFO: Encoded video stream 0 - Size: 35774950 bytes (2520.733333s duration)
+[2025-09-23 13:12:13] Starting DeepGaze processing for video stream 0
