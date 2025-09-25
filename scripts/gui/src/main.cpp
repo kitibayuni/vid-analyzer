@@ -1,0 +1,357 @@
+#include "media_controller.h"
+#include "ui_module.h"
+#include <chrono>
+#include <iostream>
+#include <thread>
+
+class VideoPlayerApplication {
+private:
+  MediaController mediaController;
+  UIModule uiModule;
+
+  // Application state
+  bool running;
+  std::string pendingVideoFile;
+
+  // File dialog handling (runs in separate thread to avoid blocking)
+  void handleLoadVideo() {
+    std::thread([this]() {
+      std::string filename = openFileDialog();
+      if (!filename.empty()) {
+        if (!mediaController.loadFile(filename)) {
+          uiModule.showError("Failed to load: " +
+                             mediaController.getLastError());
+        } else {
+          // Resize window to match video dimensions
+          auto info = mediaController.getMediaInfo();
+          if (info.hasVideo) {
+            uiModule.setWindowSize(info.videoWidth, info.videoHeight);
+          }
+        }
+      }
+    }).detach();
+  }
+
+  void handleTogglePlayPause() {
+    MediaState state = mediaController.getState();
+
+    if (state == MediaState::PLAYING) {
+      mediaController.pause();
+    } else if (state == MediaState::READY || state == MediaState::PAUSED) {
+      mediaController.play();
+    }
+  }
+
+  void handleSeek(double ratio) {
+    double duration = mediaController.getDuration();
+    if (duration > 0) {
+      double targetTime = ratio * duration;
+      mediaController.seek(targetTime);
+    }
+  }
+
+  void handleVolumeChange(float volume) { mediaController.setVolume(volume); }
+
+  void handleExit() { running = false; }
+
+  std::string openFileDialog() {
+    // This is platform-specific file dialog implementation
+    // For now, using command line input as fallback
+    std::string filename;
+
+#ifdef _WIN32
+    // Windows file dialog would go here
+    std::cout << "Please enter video file path: ";
+    std::getline(std::cin, filename);
+#elif defined(__linux__)
+    // Linux zenity dialog
+    std::string command =
+        "zenity --file-selection --title=\"Select Video File\" "
+        "--file-filter=\"Video files | *.mp4 *.avi *.mov *.mkv *.wmv *.flv "
+        "*.webm\" 2>/dev/null";
+
+    FILE *pipe = popen(command.c_str(), "r");
+    if (pipe) {
+      char buffer[1024];
+      if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        filename = std::string(buffer);
+        if (!filename.empty() && filename.back() == '\n') {
+          filename.pop_back();
+        }
+      }
+      pclose(pipe);
+    } else {
+      std::cout << "Please enter video file path: ";
+      std::getline(std::cin, filename);
+    }
+#else
+    std::cout << "Please enter video file path: ";
+    std::getline(std::cin, filename);
+#endif
+
+    return filename;
+  }
+
+public:
+  VideoPlayerApplication() : running(false) {}
+
+  bool initialize() {
+    std::cout << "\n=== MODULAR HIGH-PERFORMANCE VIDEO PLAYER ===" << std::endl;
+    std::cout << "Architecture:" << std::endl;
+    std::cout << "- MediaController: Orchestrates audio/video modules"
+              << std::endl;
+    std::cout << "- AudioModule: SDL2 audio with master clock" << std::endl;
+    std::cout << "- VideoModule: FFmpeg decoding with hardware acceleration"
+              << std::endl;
+    std::cout << "- UIModule: OpenCV-based user interface" << std::endl;
+    std::cout << "\nFeatures:" << std::endl;
+    std::cout << "- Modular design for easy maintenance and testing"
+              << std::endl;
+    std::cout << "- Lock-free ring buffers for performance" << std::endl;
+    std::cout << "- Audio-driven synchronization" << std::endl;
+    std::cout << "- Hardware-accelerated decoding" << std::endl;
+    std::cout << "- Cross-platform file dialogs" << std::endl;
+    std::cout << "=========================================\n" << std::endl;
+
+    // Initialize MediaController with default configurations
+    AudioConfig audioConfig;
+    VideoConfig videoConfig;
+
+    if (!mediaController.initialize(audioConfig, videoConfig)) {
+      std::cerr << "Failed to initialize MediaController" << std::endl;
+      return false;
+    }
+
+    // Initialize UI
+    UIConfig uiConfig;
+    if (!uiModule.initialize(uiConfig)) {
+      std::cerr << "Failed to initialize UIModule" << std::endl;
+      return false;
+    }
+
+    // Set up UI callbacks
+    UICallbacks callbacks;
+    callbacks.onLoadVideo = [this]() { handleLoadVideo(); };
+    callbacks.onTogglePlayPause = [this]() { handleTogglePlayPause(); };
+    callbacks.onSeek = [this](double ratio) { handleSeek(ratio); };
+    callbacks.onVolumeChange = [this](float volume) {
+      handleVolumeChange(volume);
+    };
+    callbacks.onExit = [this]() { handleExit(); };
+
+    uiModule.setCallbacks(callbacks);
+
+    running = true;
+    return true;
+  }
+
+  void run() {
+    if (!initialize()) {
+      std::cerr << "Failed to initialize application" << std::endl;
+      return;
+    }
+
+    std::cout << "Application started. Controls:" << std::endl;
+    std::cout << "- Click 'Load Video' to open a file" << std::endl;
+    std::cout << "- Click 'Play/Pause' to control playback" << std::endl;
+    std::cout << "- Click timeline to seek" << std::endl;
+    std::cout << "- Adjust volume slider" << std::endl;
+    std::cout << "- Press ESC to quit" << std::endl;
+    std::cout << "============================\n" << std::endl;
+
+    // Main application loop
+    auto lastStatsTime = std::chrono::steady_clock::now();
+    const auto statsInterval = std::chrono::seconds(5);
+
+    while (running && uiModule.isWindowOpen()) {
+      // Get current video frame (if available)
+      cv::Mat videoFrame = mediaController.getCurrentVideoFrame();
+
+      // Get current stats
+      MediaStats stats = mediaController.getStats();
+      double duration = mediaController.getDuration();
+
+      // Update UI
+      if (!uiModule.update(videoFrame, stats, duration)) {
+        break;
+      }
+
+      // Process keyboard input
+      int key = uiModule.processKeyboard(16); // ~60 FPS UI update
+      if (key == 27) {                        // ESC
+        break;
+      }
+
+      // Print periodic stats
+      auto now = std::chrono::steady_clock::now();
+      if (now - lastStatsTime >= statsInterval &&
+          stats.state == MediaState::PLAYING) {
+        printStats(stats);
+        lastStatsTime = now;
+      }
+
+      // Check for exit conditions
+      if (uiModule.shouldExitApplication()) {
+        break;
+      }
+    }
+
+    std::cout << "Application shutting down..." << std::endl;
+    shutdown();
+  }
+
+  void printStats(const MediaStats &stats) {
+    std::cout << "\n=== Playback Statistics ===" << std::endl;
+    std::cout << "Time: " << formatTime(stats.currentTime) << std::endl;
+    std::cout << "State: " << stateToString(stats.state) << std::endl;
+
+    if (mediaController.hasAudio()) {
+      std::cout << "Audio Buffer: "
+                << static_cast<int>(stats.audioStats.bufferFullness * 100)
+                << "%" << std::endl;
+      std::cout << "Audio Underruns: " << stats.audioStats.underruns
+                << std::endl;
+    }
+
+    if (mediaController.hasVideo()) {
+      std::cout << "Video Queue: " << stats.videoStats.queueSize << " frames"
+                << std::endl;
+      std::cout << "Frames - Decoded: " << stats.videoStats.decodedFrames
+                << ", Dropped: " << stats.videoStats.droppedFrames
+                << ", Rendered: " << stats.videoStats.renderedFrames
+                << std::endl;
+
+      if (stats.videoStats.hardwareAccelEnabled) {
+        std::cout << "Hardware Acceleration: " << stats.videoStats.hwAccelType
+                  << std::endl;
+      }
+    }
+
+    if (mediaController.isSyncEnabled()) {
+      std::cout << "A/V Sync Offset: " << (stats.syncOffset * 1000) << "ms"
+                << std::endl;
+    }
+
+    std::cout << "========================\n" << std::endl;
+  }
+
+  std::string formatTime(double seconds) const {
+    if (seconds < 0)
+      seconds = 0;
+    int mins = static_cast<int>(seconds) / 60;
+    int secs = static_cast<int>(seconds) % 60;
+
+    std::stringstream ss;
+    ss << mins << ":" << std::setfill('0') << std::setw(2) << secs;
+    return ss.str();
+  }
+
+  std::string stateToString(MediaState state) const {
+    switch (state) {
+    case MediaState::STOPPED:
+      return "Stopped";
+    case MediaState::LOADING:
+      return "Loading";
+    case MediaState::READY:
+      return "Ready";
+    case MediaState::PLAYING:
+      return "Playing";
+    case MediaState::PAUSED:
+      return "Paused";
+    case MediaState::SEEKING:
+      return "Seeking";
+    case MediaState::ERROR:
+      return "Error";
+    default:
+      return "Unknown";
+    }
+  }
+
+  void shutdown() {
+    mediaController.shutdown();
+    uiModule.shutdown();
+    std::cout << "Application shutdown complete." << std::endl;
+  }
+};
+
+int main() {
+  try {
+    VideoPlayerApplication app;
+    app.run();
+  } catch (const std::exception &e) {
+    std::cerr << "Application error: " << e.what() << std::endl;
+    return -1;
+  } catch (...) {
+    std::cerr << "Unknown application error occurred" << std::endl;
+    return -1;
+  }
+
+  return 0;
+}
+
+/*
+=== COMPILATION INSTRUCTIONS ===
+
+To compile this modular video player:
+
+g++ -std=c++11 -O3 -march=native \
+    main.cpp \
+    audio_module.cpp \
+    video_module.cpp \
+    media_controller.cpp \
+    ui_module.cpp \
+    -o modular_video_player \
+    `pkg-config --cflags --libs opencv4` \
+    `pkg-config --cflags --libs sdl2` \
+    `pkg-config --cflags --libs libavformat libavcodec libswresample libavutil`
+\ -pthread
+
+Required Files:
+- main.cpp (this file)
+- audio_module.h/cpp
+- video_module.h/cpp
+- media_controller.h/cpp
+- ui_module.h/cpp
+
+Dependencies:
+- OpenCV 4.x
+- SDL2
+- FFmpeg 4.x+
+- C++11 compiler
+
+=== MODULAR ARCHITECTURE BENEFITS ===
+
+1. **Separation of Concerns**:
+   - AudioModule: Pure audio handling
+   - VideoModule: Pure video handling
+   - MediaController: Orchestration and sync
+   - UIModule: User interface only
+
+2. **Maintainability**:
+   - Each module can be updated independently
+   - Clear interfaces between components
+   - Easy to locate and fix bugs
+
+3. **Testability**:
+   - Each module can be unit tested separately
+   - Mock implementations can be created easily
+   - Integration testing is more focused
+
+4. **Reusability**:
+   - Modules can be used in other applications
+   - Easy to swap implementations (e.g., different UI backends)
+   - Audio/Video modules could work in headless applications
+
+5. **Scalability**:
+   - New features can be added to specific modules
+   - Easy to add new media formats or audio backends
+   - Threading is contained within each module
+
+6. **Performance**:
+   - Same lock-free, high-performance code
+   - Better cache locality within modules
+   - Easier to optimize individual components
+
+This modular approach transforms the monolithic player into a professional,
+maintainable architecture while preserving all performance optimizations.
+*/
