@@ -50,8 +50,10 @@ private:
   std::unique_ptr<AudioModule> audioModule;
   std::unique_ptr<VideoModule> videoModule;
 
-  // FFmpeg format context (shared between modules)
-  AVFormatContext *formatContext;
+  // Separate FFmpeg format contexts for thread safety
+  AVFormatContext* audioFormatContext{nullptr};
+  AVFormatContext* videoFormatContext{nullptr};
+  std::string currentFilename; // Store filename for context creation
 
   // Media state
   std::atomic<MediaState> currentState{MediaState::STOPPED};
@@ -59,8 +61,8 @@ private:
   mutable std::mutex mediaInfoMutex;
 
   // Stream indices
-  int audioStreamIndex;
-  int videoStreamIndex;
+  int audioStreamIndex{-1};
+  int videoStreamIndex{-1};
 
   // Synchronization
   std::atomic<bool> syncEnabled{true};
@@ -134,5 +136,6 @@ private:
   std::string lastError;
   void setError(const std::string &error);
 };
+
 
 #endif // MEDIA_CONTROLLER_H

@@ -154,13 +154,26 @@ bool AudioModule::initializeSDL(const AudioConfig &config) {
   return true;
 }
 
-bool AudioModule::loadStream(AVFormatContext *ctx, int audioStreamIndex) {
-  if (!ctx || audioStreamIndex < 0) {
-    std::cerr << "Invalid audio stream parameters" << std::endl;
-    return false;
-  }
-
-  std::cout << "Loading audio stream " << audioStreamIndex << std::endl;
+bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
+    if (!ctx) {
+        std::cerr << "AudioModule: Null format context" << std::endl;
+        return false;
+    }
+    
+    if (audioStreamIndex < 0 || audioStreamIndex >= static_cast<int>(ctx->nb_streams)) {
+        std::cerr << "AudioModule: Invalid stream index " << audioStreamIndex 
+                  << " (total streams: " << ctx->nb_streams << ")" << std::endl;
+        return false;
+    }
+    
+    AVCodecParameters* codecpar = ctx->streams[audioStreamIndex]->codecpar;
+    if (codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
+        std::cerr << "AudioModule: Stream " << audioStreamIndex 
+                  << " is not an audio stream" << std::endl;
+        return false;
+    }
+    
+    std::cout << "Loading audio stream " << audioStreamIndex << std::endl;
 
   formatContext = ctx;
   streamIndex = audioStreamIndex;
@@ -276,72 +289,50 @@ void AudioModule::audioCallback(void *userdata, Uint8 *stream, int len) {
 }
 
 void AudioModule::decodeThreadFunction() {
-  if (!swrContext || streamIndex < 0) {
-    std::cerr << "Audio decode thread: Invalid configuration" << std::endl;
-    return;
-  }
-
-  AVPacket *packet = av_packet_alloc();
-  AVFrame *frame = av_frame_alloc();
-
-  const int BATCH_SIZE = 10;
-  std::vector<AVPacket *> packet_batch;
-  packet_batch.reserve(BATCH_SIZE);
-
-  while (!shouldStop) {
-    if (isPlaying && audioBuffer->fullness_ratio() < 0.8) {
-      // Read batch of packets
-      packet_batch.clear();
-      for (int i = 0; i < BATCH_SIZE && !shouldStop; i++) {
-        AVPacket *batch_packet = av_packet_alloc();
-        if (av_read_frame(formatContext, batch_packet) >= 0) {
-          if (batch_packet->stream_index == streamIndex) {
-            packet_batch.push_back(batch_packet);
-          } else {
-            av_packet_free(&batch_packet);
-          }
-        } else {
-          av_packet_free(&batch_packet);
-          // End of file - could loop or stop
-          break;
-        }
-      }
-
-      // Process batch
-      for (AVPacket *batch_packet : packet_batch) {
-        if (avcodec_send_packet(codecContext, batch_packet) >= 0) {
-          while (avcodec_receive_frame(codecContext, frame) >= 0) {
-            int output_samples =
-                swr_get_out_samples(swrContext, frame->nb_samples);
-            if (output_samples > 0) {
-              if (audioBuffers.allocate(output_samples, audioSpec.channels)) {
-                int resampled = swr_convert(
-                    swrContext, audioBuffers.output_data, output_samples,
-                    (const uint8_t **)frame->data, frame->nb_samples);
-
-                if (resampled > 0) {
-                  int16_t *samples =
-                      reinterpret_cast<int16_t *>(audioBuffers.output_data[0]);
-                  int total_samples = resampled * audioSpec.channels;
-
-                  if (!audioBuffer->write(samples, total_samples)) {
-                    overrunCount++;
-                  }
+    if (!swrContext || streamIndex < 0) return;
+    
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    
+    while (!shouldStop) {
+        if (isPlaying && audioBuffer->fullness_ratio() < 0.8) {
+            if (av_read_frame(formatContext, packet) >= 0) {
+                if (packet->stream_index == streamIndex) {
+                    if (avcodec_send_packet(codecContext, packet) >= 0) {
+                        while (avcodec_receive_frame(codecContext, frame) >= 0) {
+                            int output_samples = swr_get_out_samples(swrContext, frame->nb_samples);
+                            if (output_samples > 0) {
+                                if (audioBuffers.allocate(output_samples, audioSpec.channels)) {
+                                    int resampled = swr_convert(swrContext, audioBuffers.output_data, output_samples,
+                                                              (const uint8_t**)frame->data, frame->nb_samples);
+                                    
+                                    if (resampled > 0) {
+                                        int16_t* samples = reinterpret_cast<int16_t*>(audioBuffers.output_data[0]);
+                                        int total_samples = resampled * audioSpec.channels;
+                                        
+                                        if (!audioBuffer->write(samples, total_samples)) {
+                                            overrunCount++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-              }
+                av_packet_unref(packet);
+            } else {
+                // EOF - could seek back to start for looping
+                break;
             }
-          }
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        av_packet_free(&batch_packet);
-      }
-    } else {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-  }
-
-  av_frame_free(&frame);
-  av_packet_free(&packet);
+    
+    av_frame_free(&frame);
+    av_packet_free(&packet);
 }
+
 
 void AudioModule::play() {
   if (!isInitialized() || !isStreamLoaded())

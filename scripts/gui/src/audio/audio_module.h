@@ -6,6 +6,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <mutex>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -40,6 +41,7 @@ struct AudioStats {
 
 class AudioModule {
 private:
+  std::mutex contextMutex;
   // SDL Audio
   SDL_AudioDeviceID audioDevice;
   SDL_AudioSpec audioSpec;

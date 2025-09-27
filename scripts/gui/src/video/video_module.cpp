@@ -39,9 +39,9 @@ bool VideoModule::initialize(const VideoConfig &cfg) {
 
   config = cfg;
 
-  if (config.enableHardwareAccel) {
-    initializeHardwareAccel();
-  }
+  //if (config.enableHardwareAccel) {
+  //  initializeHardwareAccel();
+  //}
 
   std::cout << "VideoModule initialized successfully" << std::endl;
   return true;
@@ -68,13 +68,26 @@ bool VideoModule::initializeHardwareAccel() {
   return false;
 }
 
-bool VideoModule::loadStream(AVFormatContext *ctx, int videoStreamIndex) {
-  if (!ctx || videoStreamIndex < 0) {
-    std::cerr << "Invalid video stream parameters" << std::endl;
-    return false;
-  }
-
-  std::cout << "Loading video stream " << videoStreamIndex << std::endl;
+bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
+    if (!ctx) {
+        std::cerr << "VideoModule: Null format context" << std::endl;
+        return false;
+    }
+    
+    if (videoStreamIndex < 0 || videoStreamIndex >= static_cast<int>(ctx->nb_streams)) {
+        std::cerr << "VideoModule: Invalid stream index " << videoStreamIndex 
+                  << " (total streams: " << ctx->nb_streams << ")" << std::endl;
+        return false;
+    }
+    
+    AVCodecParameters* codecpar = ctx->streams[videoStreamIndex]->codecpar;
+    if (codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
+        std::cerr << "VideoModule: Stream " << videoStreamIndex 
+                  << " is not a video stream" << std::endl;
+        return false;
+    }
+    
+    std::cout << "Loading video stream " << videoStreamIndex << std::endl;
 
   formatContext = ctx;
   streamIndex = videoStreamIndex;
@@ -124,40 +137,49 @@ bool VideoModule::loadStream(AVFormatContext *ctx, int videoStreamIndex) {
 }
 
 bool VideoModule::setupDecoder() {
-  AVCodecParameters *codecParams =
-      formatContext->streams[streamIndex]->codecpar;
-  const AVCodec *codec = avcodec_find_decoder(codecParams->codec_id);
+    AVCodecParameters *codecParams =
+        formatContext->streams[streamIndex]->codecpar;
+    const AVCodec *codec = avcodec_find_decoder(codecParams->codec_id);
 
-  if (!codec) {
-    std::cerr << "Video codec not found" << std::endl;
-    return false;
-  }
+    if (!codec) {
+        std::cerr << "Video codec not found" << std::endl;
+        return false;
+    }
 
-  codecContext = avcodec_alloc_context3(codec);
-  if (!codecContext) {
-    std::cerr << "Failed to allocate video codec context" << std::endl;
-    return false;
-  }
+    codecContext = avcodec_alloc_context3(codec);
+    if (!codecContext) {
+        std::cerr << "Failed to allocate video codec context" << std::endl;
+        return false;
+    }
 
-  if (avcodec_parameters_to_context(codecContext, codecParams) < 0) {
-    std::cerr << "Failed to copy video codec parameters" << std::endl;
-    avcodec_free_context(&codecContext);
-    return false;
-  }
+    if (avcodec_parameters_to_context(codecContext, codecParams) < 0) {
+        std::cerr << "Failed to copy video codec parameters" << std::endl;
+        avcodec_free_context(&codecContext);
+        return false;
+    }
 
-  // Try to set hardware acceleration
-  if (hwDeviceCtx) {
-    codecContext->hw_device_ctx = av_buffer_ref(hwDeviceCtx);
-  }
+    // Try to set hardware acceleration
+    if (hwDeviceCtx) {
+        codecContext->hw_device_ctx = av_buffer_ref(hwDeviceCtx);
+    }
 
-  if (avcodec_open2(codecContext, codec, nullptr) < 0) {
-    std::cerr << "Failed to open video codec" << std::endl;
-    avcodec_free_context(&codecContext);
-    return false;
-  }
+    // --- New resilience settings ---
+    av_opt_set(codecContext->priv_data, "threads", "auto", 0);
+    av_opt_set(codecContext->priv_data, "thread_type", "frame", 0);
 
-  return true;
+    codecContext->error_concealment = FF_EC_GUESS_MVS | FF_EC_DEBLOCK;
+    codecContext->skip_loop_filter = AVDISCARD_DEFAULT;
+    // -------------------------------
+
+    if (avcodec_open2(codecContext, codec, nullptr) < 0) {
+        std::cerr << "Failed to open video codec" << std::endl;
+        avcodec_free_context(&codecContext);
+        return false;
+    }
+
+    return true;
 }
+
 
 void VideoModule::startDecoding() {
   if (!isStreamLoaded()) {
@@ -193,99 +215,129 @@ void VideoModule::stopDecoding() {
 }
 
 void VideoModule::decodeThreadFunction() {
-  AVPacket *packet = av_packet_alloc();
-  AVFrame *frame = av_frame_alloc();
-  AVFrame *hw_frame = nullptr;
-
-  if (hwDeviceCtx) {
-    hw_frame = av_frame_alloc();
-  }
-
-  while (!shouldStop && isDecoding) {
-    // Handle seek requests
-    if (seekRequested.load()) {
-      performSeek(seekTargetTime.load());
-      seekRequested = false;
+    std::cout << "DEBUG: Video decode thread started" << std::endl;
+    
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    AVFrame* hw_frame = nullptr;
+    
+    if (hwDeviceCtx) {
+        hw_frame = av_frame_alloc();
     }
-
-    // Decode frames when queue has space
-    if (frameQueue->size() < config.frameQueueSize * 0.8) {
-      if (av_read_frame(formatContext, packet) >= 0) {
-        if (packet->stream_index == streamIndex) {
-          if (avcodec_send_packet(codecContext, packet) >= 0) {
-            AVFrame *decode_frame = frame;
-
-            // Handle hardware decoding
-            if (hwDeviceCtx && hw_frame) {
-              if (avcodec_receive_frame(codecContext, hw_frame) >= 0) {
-                // Transfer from GPU to CPU
-                if (av_hwframe_transfer_data(frame, hw_frame, 0) >= 0) {
-                  decode_frame = frame;
-                }
-              }
-            } else {
-              avcodec_receive_frame(codecContext, decode_frame);
-            }
-
-            if (decode_frame->data[0]) {
-              FrameBuffer fb;
-              if (convertAVFrameToMat(decode_frame, fb.frame)) {
-                fb.timestamp =
-                    packet->pts *
-                    av_q2d(formatContext->streams[streamIndex]->time_base);
-                fb.valid = true;
-
-                if (!frameQueue->push(std::move(fb))) {
-                  droppedFrames++;
-                } else {
-                  decodedFrames++;
-                }
-              }
-            }
-          }
+    
+    int packets_read = 0;
+    int frames_decoded = 0;
+    
+    while (!shouldStop && isDecoding) {
+        if (seekRequested.load()) {
+            performSeek(seekTargetTime.load());
+            seekRequested = false;
         }
-        av_packet_unref(packet);
-      } else {
-        // End of file - could loop or stop
-        isDecoding = false;
-        break;
-      }
-    } else {
-      std::this_thread::sleep_for(std::chrono::microseconds(1000));
+        
+        if (frameQueue->size() < config.frameQueueSize * 0.8) {
+            int read_result = av_read_frame(formatContext, packet);
+            if (read_result >= 0) {
+                packets_read++;
+                
+                if (packet->stream_index == streamIndex) {
+                    std::cout << "DEBUG: Processing video packet " << packets_read << std::endl;
+                    
+                    if (avcodec_send_packet(codecContext, packet) >= 0) {
+                        while (avcodec_receive_frame(codecContext, frame) >= 0) {
+                            frames_decoded++;
+                            std::cout << "DEBUG: Decoded video frame " << frames_decoded << std::endl;
+                            
+                            AVFrame* decode_frame = frame;
+                            
+                            // Handle hardware decoding
+                            if (hwDeviceCtx && hw_frame) {
+                                if (avcodec_receive_frame(codecContext, hw_frame) >= 0) {
+                                    if (av_hwframe_transfer_data(frame, hw_frame, 0) >= 0) {
+                                        decode_frame = frame;
+                                    }
+                                }
+                            }
+                            
+                            if (decode_frame->data[0]) {
+                                FrameBuffer fb;
+                                if (convertAVFrameToMat(decode_frame, fb.frame)) {
+                                    AVStream* stream = formatContext->streams[streamIndex];
+                                    if (decode_frame->pts != AV_NOPTS_VALUE) {
+                                        fb.timestamp = decode_frame->pts * av_q2d(stream->time_base);
+                                    } else {
+                                        fb.timestamp = frames_decoded / fps;
+                                    }
+                                    fb.valid = true;
+                                    
+                                    if (!frameQueue->push(std::move(fb))) {
+                                        droppedFrames++;
+                                        std::cout << "DEBUG: Frame queue full, dropped frame" << std::endl;
+                                    } else {
+                                        decodedFrames++;
+                                        std::cout << "DEBUG: Added frame to queue, queue size: " << frameQueue->size() << std::endl;
+                                    }
+                                } else {
+                                    std::cout << "DEBUG: convertAVFrameToMat failed" << std::endl;
+                                }
+                            } else {
+                                std::cout << "DEBUG: No frame data" << std::endl;
+                            }
+                        }
+                    } else {
+                        std::cout << "DEBUG: avcodec_send_packet failed" << std::endl;
+                    }
+                }
+                av_packet_unref(packet);
+            } else {
+                std::cout << "DEBUG: av_read_frame failed or EOF: " << read_result << std::endl;
+                break;
+            }
+        } else {
+            std::this_thread::sleep_for(std::chrono::microseconds(1000));
+        }
     }
-  }
-
-  av_frame_free(&frame);
-  if (hw_frame)
-    av_frame_free(&hw_frame);
-  av_packet_free(&packet);
+    
+    std::cout << "DEBUG: Video decode thread ending. Packets: " << packets_read 
+              << ", Frames: " << frames_decoded << std::endl;
+    
+    av_frame_free(&frame);
+    if (hw_frame) av_frame_free(&hw_frame);
+    av_packet_free(&packet);
 }
 
-bool VideoModule::convertAVFrameToMat(AVFrame *frame, cv::Mat &output) {
-  if (!frame || !frame->data[0])
-    return false;
 
-  cv::Mat temp_mat;
-
-  if (frame->format == AV_PIX_FMT_YUV420P) {
-    // Most common format - direct conversion
-    cv::Mat yuv(frame->height + frame->height / 2, frame->width, CV_8UC1,
-                frame->data[0], frame->linesize[0]);
-    cv::cvtColor(yuv, temp_mat, cv::COLOR_YUV420p2BGR);
-  } else {
-    // Other formats - generic but slower conversion
-    temp_mat = cv::Mat(frame->height, frame->width, CV_8UC3, frame->data[0],
-                       frame->linesize[0]);
-  }
-
-  // Resize if needed
-  if (temp_mat.cols != videoWidth || temp_mat.rows != videoHeight) {
-    cv::resize(temp_mat, output, cv::Size(videoWidth, videoHeight));
-  } else {
-    output = std::move(temp_mat);
-  }
-
-  return !output.empty();
+bool VideoModule::convertAVFrameToMat(AVFrame* frame, cv::Mat& output) {
+    if (!frame || !frame->data[0]) return false;
+    
+    // Simple approach: use OpenCV's built-in conversion
+    if (frame->format == AV_PIX_FMT_YUV420P) {
+        // Create temporary Mat from frame data
+        cv::Mat yuv_image(frame->height + frame->height/2, frame->width, CV_8UC1);
+        
+        // Copy Y plane
+        memcpy(yuv_image.data, frame->data[0], frame->width * frame->height);
+        
+        // Copy UV planes
+        for (int i = 0; i < frame->height/2; i++) {
+            memcpy(yuv_image.data + frame->width * frame->height + i * frame->width/2,
+                   frame->data[1] + i * frame->linesize[1], frame->width/2);
+            memcpy(yuv_image.data + frame->width * frame->height * 5/4 + i * frame->width/2,
+                   frame->data[2] + i * frame->linesize[2], frame->width/2);
+        }
+        
+        cv::Mat bgr_image;
+        cv::cvtColor(yuv_image, bgr_image, cv::COLOR_YUV420p2BGR);
+        
+        if (bgr_image.cols != videoWidth || bgr_image.rows != videoHeight) {
+            cv::resize(bgr_image, output, cv::Size(videoWidth, videoHeight));
+        } else {
+            output = bgr_image;
+        }
+        
+        return true;
+    }
+    
+    return false; // Unsupported format
 }
 
 cv::Mat VideoModule::getCurrentFrame(double targetTime) {
@@ -309,19 +361,24 @@ cv::Mat VideoModule::getCurrentFrameImmediate() {
 }
 
 void VideoModule::updateCurrentFrame(double targetTime, double tolerance) {
-  FrameBuffer fb;
-
-  // Pop frames until we find one that's current or future
-  while (frameQueue->pop(fb)) {
-    if (fb.valid && fb.timestamp >= targetTime - tolerance) {
-      std::lock_guard<std::mutex> lock(currentFrameMutex);
-      currentFrame = std::move(fb.frame);
-      currentFrameTimestamp = fb.timestamp;
-      return;
+    FrameBuffer fb;
+    
+    // Just get the most recent frame from the queue
+    FrameBuffer lastValidFrame;
+    bool hasFrame = false;
+    
+    while (frameQueue->pop(fb)) {
+        if (fb.valid) {
+            lastValidFrame = std::move(fb);
+            hasFrame = true;
+        }
     }
-    // Frame is too old, drop it
-    droppedFrames++;
-  }
+    
+    if (hasFrame) {
+        std::lock_guard<std::mutex> lock(currentFrameMutex);
+        currentFrame = std::move(lastValidFrame.frame);
+        currentFrameTimestamp = lastValidFrame.timestamp;
+    }
 }
 
 bool VideoModule::seek(double timeSeconds) {

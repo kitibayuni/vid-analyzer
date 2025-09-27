@@ -147,8 +147,8 @@ public:
 
   void run() {
     if (!initialize()) {
-      std::cerr << "Failed to initialize application" << std::endl;
-      return;
+        std::cerr << "Failed to initialize application" << std::endl;
+        return;
     }
 
     std::cout << "Application started. Controls:" << std::endl;
@@ -159,46 +159,53 @@ public:
     std::cout << "- Press ESC to quit" << std::endl;
     std::cout << "============================\n" << std::endl;
 
-    // Main application loop
+    // Timing
+    auto lastFrameTime = std::chrono::steady_clock::now();
+    const auto targetFrameTime = std::chrono::microseconds(16667); // ~60 FPS UI
+
+    // Stats printing
     auto lastStatsTime = std::chrono::steady_clock::now();
     const auto statsInterval = std::chrono::seconds(5);
 
     while (running && uiModule.isWindowOpen()) {
-      // Get current video frame (if available)
-      cv::Mat videoFrame = mediaController.getCurrentVideoFrame();
+        auto currentTime = std::chrono::steady_clock::now();
 
-      // Get current stats
-      MediaStats stats = mediaController.getStats();
-      double duration = mediaController.getDuration();
+        // Get current video frame (synced with audio time ideally)
+        cv::Mat videoFrame = mediaController.getCurrentVideoFrame();
 
-      // Update UI
-      if (!uiModule.update(videoFrame, stats, duration)) {
-        break;
-      }
+        // Get current stats + duration
+        MediaStats stats = mediaController.getStats();
+        double duration = mediaController.getDuration();
 
-      // Process keyboard input
-      int key = uiModule.processKeyboard(16); // ~60 FPS UI update
-      if (key == 27) {                        // ESC
-        break;
-      }
+        // Update UI only if enough time has passed
+        if (currentTime - lastFrameTime >= targetFrameTime) {
+            if (!uiModule.update(videoFrame, stats, duration)) {
+                break;
+            }
+            lastFrameTime = currentTime;
+        }
 
-      // Print periodic stats
-      auto now = std::chrono::steady_clock::now();
-      if (now - lastStatsTime >= statsInterval &&
-          stats.state == MediaState::PLAYING) {
-        printStats(stats);
-        lastStatsTime = now;
-      }
+        // Process keyboard with very short timeout
+        int key = uiModule.processKeyboard(1);
+        if (key == 27) break; // ESC exits
 
-      // Check for exit conditions
-      if (uiModule.shouldExitApplication()) {
-        break;
-      }
+        // Print stats less frequently
+        if (currentTime - lastStatsTime >= statsInterval &&
+            stats.state == MediaState::PLAYING) {
+            printStats(stats);
+            lastStatsTime = currentTime;
+        }
+
+        // Check for exit request from UI
+        if (uiModule.shouldExitApplication()) {
+            break;
+        }
     }
 
     std::cout << "Application shutting down..." << std::endl;
     shutdown();
-  }
+}
+
 
   void printStats(const MediaStats &stats) {
     std::cout << "\n=== Playback Statistics ===" << std::endl;
@@ -232,6 +239,12 @@ public:
                 << std::endl;
     }
 
+    // In the main loop, add this debug output:
+    if (stats.state == MediaState::PLAYING) {
+        std::cout << "DEBUG: Audio time: " << mediaController.getCurrentTime() 
+                  << ", Video queue: " << stats.videoStats.queueSize 
+                  << ", Decoded: " << stats.videoStats.decodedFrames << std::endl;
+    }
     std::cout << "========================\n" << std::endl;
   }
 

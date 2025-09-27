@@ -3,10 +3,14 @@
 #include <sstream>
 
 MediaController::MediaController() 
-    : formatContext(nullptr), audioStreamIndex(-1), videoStreamIndex(-1) {
+    : audioFormatContext(nullptr), videoFormatContext(nullptr), 
+      audioStreamIndex(-1), videoStreamIndex(-1) {
     
     audioModule = std::make_unique<AudioModule>();
     videoModule = std::make_unique<VideoModule>();
+    
+    // Temporarily disable sync to test
+    syncEnabled = false;
 }
 
 MediaController::~MediaController() {
@@ -45,18 +49,17 @@ bool MediaController::loadFile(const std::string& filename) {
     // Close any existing file
     closeFile();
     
-    if (!openFile(filename)) {
-        setState(MediaState::ERROR);
-        return false;
-    }
+    // Store filename
+    currentFilename = filename;
     
+    // Find streams first
     if (!findStreams()) {
         setError("No supported audio or video streams found");
-        closeFile();
         setState(MediaState::ERROR);
         return false;
     }
     
+    // Then load the streams
     if (!loadStreams()) {
         setError("Failed to load media streams");
         closeFile();
@@ -76,23 +79,23 @@ bool MediaController::loadFile(const std::string& filename) {
 }
 
 bool MediaController::openFile(const std::string& filename) {
-    formatContext = avformat_alloc_context();
-    if (!formatContext) {
-        setError("Failed to allocate format context");
-        return false;
+    currentFilename = filename;
+    
+    // Open separate contexts
+    if (audioStreamIndex >= 0) {
+        audioFormatContext = avformat_alloc_context();
+        if (avformat_open_input(&audioFormatContext, filename.c_str(), nullptr, nullptr) < 0) {
+            return false;
+        }
+        avformat_find_stream_info(audioFormatContext, nullptr);
     }
     
-    if (avformat_open_input(&formatContext, filename.c_str(), nullptr, nullptr) < 0) {
-        setError("Could not open file: " + filename);
-        avformat_free_context(formatContext);
-        formatContext = nullptr;
-        return false;
-    }
-    
-    if (avformat_find_stream_info(formatContext, nullptr) < 0) {
-        setError("Could not find stream information");
-        avformat_close_input(&formatContext);
-        return false;
+    if (videoStreamIndex >= 0) {
+        videoFormatContext = avformat_alloc_context();
+        if (avformat_open_input(&videoFormatContext, filename.c_str(), nullptr, nullptr) < 0) {
+            return false;
+        }
+        avformat_find_stream_info(videoFormatContext, nullptr);
     }
     
     return true;
@@ -101,33 +104,90 @@ bool MediaController::openFile(const std::string& filename) {
 bool MediaController::findStreams() {
     audioStreamIndex = videoStreamIndex = -1;
     
-    for (unsigned int i = 0; i < formatContext->nb_streams; i++) {
-        AVCodecParameters* codecpar = formatContext->streams[i]->codecpar;
+    // Use a temporary context for stream discovery
+    AVFormatContext* tempContext = nullptr;
+    if (avformat_open_input(&tempContext, currentFilename.c_str(), nullptr, nullptr) < 0) {
+        setError("Could not open file for stream detection");
+        return false;
+    }
+    
+    if (avformat_find_stream_info(tempContext, nullptr) < 0) {
+        setError("Could not find stream information");
+        avformat_close_input(&tempContext);
+        return false;
+    }
+    
+    std::cout << "Found " << tempContext->nb_streams << " streams" << std::endl;
+    
+    for (unsigned int i = 0; i < tempContext->nb_streams; i++) {
+        AVCodecParameters* codecpar = tempContext->streams[i]->codecpar;
         
         if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO && audioStreamIndex == -1) {
             audioStreamIndex = i;
+            std::cout << "Audio stream found at index " << i << std::endl;
         } else if (codecpar->codec_type == AVMEDIA_TYPE_VIDEO && videoStreamIndex == -1) {
             videoStreamIndex = i;
+            std::cout << "Video stream found at index " << i << std::endl;
         }
     }
     
-    return (audioStreamIndex >= 0 || videoStreamIndex >= 0);
+    // Store duration
+    if (tempContext->duration != AV_NOPTS_VALUE) {
+        std::lock_guard<std::mutex> lock(mediaInfoMutex);
+        mediaInfo.duration = tempContext->duration / static_cast<double>(AV_TIME_BASE);
+    }
+    
+    avformat_close_input(&tempContext);
+    
+    bool hasStreams = (audioStreamIndex >= 0 || videoStreamIndex >= 0);
+    std::cout << "Stream detection result - Audio: " << audioStreamIndex 
+              << ", Video: " << videoStreamIndex << std::endl;
+    
+    return hasStreams;
 }
 
 bool MediaController::loadStreams() {
     bool success = true;
     
-    // Load audio stream if available
+    // Load audio stream if found
     if (audioStreamIndex >= 0) {
-        if (!audioModule->loadStream(formatContext, audioStreamIndex)) {
+        std::cout << "Opening audio context for stream " << audioStreamIndex << std::endl;
+        
+        audioFormatContext = nullptr;
+        if (avformat_open_input(&audioFormatContext, currentFilename.c_str(), nullptr, nullptr) < 0) {
+            setError("Failed to open audio context");
+            return false;
+        }
+        
+        if (avformat_find_stream_info(audioFormatContext, nullptr) < 0) {
+            setError("Failed to find audio stream info");
+            avformat_close_input(&audioFormatContext);
+            return false;
+        }
+        
+        if (!audioModule->loadStream(audioFormatContext, audioStreamIndex)) {
             std::cerr << "Failed to load audio stream" << std::endl;
             success = false;
         }
     }
     
-    // Load video stream if available
+    // Load video stream if found
     if (videoStreamIndex >= 0) {
-        if (!videoModule->loadStream(formatContext, videoStreamIndex)) {
+        std::cout << "Opening video context for stream " << videoStreamIndex << std::endl;
+        
+        videoFormatContext = nullptr;
+        if (avformat_open_input(&videoFormatContext, currentFilename.c_str(), nullptr, nullptr) < 0) {
+            setError("Failed to open video context");
+            return false;
+        }
+        
+        if (avformat_find_stream_info(videoFormatContext, nullptr) < 0) {
+            setError("Failed to find video stream info");
+            avformat_close_input(&videoFormatContext);
+            return false;
+        }
+        
+        if (!videoModule->loadStream(videoFormatContext, videoStreamIndex)) {
             std::cerr << "Failed to load video stream" << std::endl;
             success = false;
         }
@@ -142,24 +202,34 @@ void MediaController::updateMediaInfo() {
     mediaInfo.hasAudio = (audioStreamIndex >= 0);
     mediaInfo.hasVideo = (videoStreamIndex >= 0);
     
-    if (formatContext) {
-        mediaInfo.duration = formatContext->duration / static_cast<double>(AV_TIME_BASE);
+    // Get duration from whichever context is available
+    AVFormatContext* contextToUse = nullptr;
+    if (audioFormatContext) {
+        contextToUse = audioFormatContext;
+    } else if (videoFormatContext) {
+        contextToUse = videoFormatContext;
+    }
+    
+    if (contextToUse) {
+        if (contextToUse->duration != AV_NOPTS_VALUE) {
+            mediaInfo.duration = contextToUse->duration / static_cast<double>(AV_TIME_BASE);
+        }
         
-        if (mediaInfo.hasVideo) {
+        if (mediaInfo.hasVideo && videoFormatContext) {
             mediaInfo.videoWidth = videoModule->getWidth();
             mediaInfo.videoHeight = videoModule->getHeight();
             mediaInfo.fps = videoModule->getFPS();
             
             // Get video codec name
-            AVCodecParameters* vcodecpar = formatContext->streams[videoStreamIndex]->codecpar;
+            AVCodecParameters* vcodecpar = videoFormatContext->streams[videoStreamIndex]->codecpar;
             const AVCodec* vcodec = avcodec_find_decoder(vcodecpar->codec_id);
             if (vcodec) {
                 mediaInfo.videoCodec = vcodec->name;
             }
         }
         
-        if (mediaInfo.hasAudio) {
-            AVCodecParameters* acodecpar = formatContext->streams[audioStreamIndex]->codecpar;
+        if (mediaInfo.hasAudio && audioFormatContext) {
+            AVCodecParameters* acodecpar = audioFormatContext->streams[audioStreamIndex]->codecpar;
             mediaInfo.audioSampleRate = acodecpar->sample_rate;
             mediaInfo.audioChannels = acodecpar->ch_layout.nb_channels;
             
@@ -173,16 +243,18 @@ void MediaController::updateMediaInfo() {
 }
 
 void MediaController::closeFile() {
-    if (formatContext) {
-        avformat_close_input(&formatContext);
-        formatContext = nullptr;
+    if (audioFormatContext) {
+        avformat_close_input(&audioFormatContext);
+        audioFormatContext = nullptr;
+    }
+    
+    if (videoFormatContext) {
+        avformat_close_input(&videoFormatContext);
+        videoFormatContext = nullptr;
     }
     
     audioStreamIndex = -1;
     videoStreamIndex = -1;
-    
-    // Reset media info
-    mediaInfo = MediaInfo();
 }
 
 bool MediaController::play() {
@@ -261,8 +333,14 @@ bool MediaController::stop() {
 bool MediaController::seek(double timeSeconds) {
     std::lock_guard<std::mutex> lock(operationMutex);
     
-    if (!formatContext || timeSeconds < 0 || timeSeconds > getDuration()) {
+    if (timeSeconds < 0 || timeSeconds > getDuration()) {
         setError("Invalid seek time");
+        return false;
+    }
+    
+    // Check if we have any loaded contexts
+    if (!audioFormatContext && !videoFormatContext) {
+        setError("No media loaded");
         return false;
     }
     
@@ -279,7 +357,7 @@ bool MediaController::seek(double timeSeconds) {
         videoModule->stopDecoding();
     }
     
-    // Perform seek operations
+    // Perform seek operations on both contexts
     bool success = true;
     
     if (hasAudio()) {
@@ -324,14 +402,23 @@ cv::Mat MediaController::getCurrentVideoFrame() {
         return cv::Mat();
     }
     
+    cv::Mat frame;
     if (syncEnabled && hasAudio()) {
-        // Sync video to audio master clock
         double audioTime = audioModule->getCurrentTime();
-        return videoModule->getCurrentFrame(audioTime);
+        frame = videoModule->getCurrentFrame(audioTime);
+        std::cout << "DEBUG: Requesting video frame for audio time: " << audioTime << std::endl;
     } else {
-        // Return immediate frame without sync
-        return videoModule->getCurrentFrameImmediate();
+        frame = videoModule->getCurrentFrameImmediate();
+        std::cout << "DEBUG: Requesting immediate video frame" << std::endl;
     }
+    
+    if (frame.empty()) {
+        std::cout << "DEBUG: Received empty video frame" << std::endl;
+    } else {
+        std::cout << "DEBUG: Received video frame " << frame.cols << "x" << frame.rows << std::endl;
+    }
+    
+    return frame;
 }
 
 void MediaController::setVolume(float volume) {

@@ -14,9 +14,11 @@
 #include <cstdlib>
 #endif
 
-UIModule::UIModule()
-    : windowName("High-Performance Video Player"), windowCreated(false),
-      shouldExit(false), videoDisplayWidth(800), videoDisplayHeight(600) {}
+UIModule::UIModule() 
+    : windowName("High-Performance Video Player"), 
+      videoDisplayWidth(800), videoDisplayHeight(600),  // Move these up
+      windowCreated(false), shouldExit(false) {         // Move these down
+}
 
 UIModule::~UIModule() { shutdown(); }
 
@@ -257,12 +259,11 @@ void UIModule::drawStats(const MediaStats &stats, int y) {
               cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(180, 180, 180), 1);
 }
 
-void UIModule::onMouseClick(int event, int x, int y, int flags,
-                            void *userdata) {
-  UIModule *ui = static_cast<UIModule *>(userdata);
-  if (event == cv::EVENT_LBUTTONDOWN) {
-    ui->handleMouseClick(x, y);
-  }
+void UIModule::onMouseClick(int event, int x, int y, int /*flags*/, void* userdata) {
+    UIModule* ui = static_cast<UIModule*>(userdata);
+    if (event == cv::EVENT_LBUTTONDOWN) {
+        ui->handleMouseClick(x, y);
+    }
 }
 
 void UIModule::handleMouseClick(int x, int y) {
