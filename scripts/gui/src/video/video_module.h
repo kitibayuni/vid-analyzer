@@ -89,6 +89,10 @@ private:
   std::atomic<double> seekTargetTime{0.0};
   std::thread decodeThread;
 
+  // 🔹 Added render thread management
+  std::thread renderThread;
+  std::atomic<bool> shouldRender{false};
+
   // Statistics
   std::atomic<int> decodedFrames{0};
   std::atomic<int> droppedFrames{0};
@@ -105,7 +109,10 @@ private:
   bool convertAVFrameToMat(AVFrame *frame, cv::Mat &output);
   void updateCurrentFrame(double targetTime, double tolerance = 0.05);
 
-public:
+  // 🔹 New render thread function
+  void renderThreadFunction();
+
+public:  // <-- this needs to be INSIDE the class, not outside
   VideoModule();
   ~VideoModule();
 
@@ -141,6 +148,7 @@ public:
   VideoModule(VideoModule &&) = delete;
   VideoModule &operator=(VideoModule &&) = delete;
 };
+
 
 // Lock-free ring buffer template (moved to header for template instantiation)
 template <typename T, size_t Size> class LockFreeRingBuffer {

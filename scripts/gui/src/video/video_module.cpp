@@ -87,54 +87,55 @@ bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
         return false;
     }
     
-    std::cout << "Loading video stream " << videoStreamIndex << std::endl;
+    std::cout << "VideoModule::loadStream called with ctx=" << ctx 
+              << ", streamIndex=" << videoStreamIndex << std::endl;
 
-  formatContext = ctx;
-  streamIndex = videoStreamIndex;
+    formatContext = ctx;   // 🔑 Ensure assignment happens before setup
+    streamIndex = videoStreamIndex;
+    
+    if (!setupDecoder()) {
+        std::cerr << "VideoModule: Failed to setup video decoder" << std::endl;
+        return false;
+    }
 
-  if (!setupDecoder()) {
-    std::cerr << "Failed to setup video decoder" << std::endl;
-    return false;
-  }
+    // Get video properties
+    AVStream *videoStream = formatContext->streams[streamIndex];
+    fps = av_q2d(videoStream->r_frame_rate);
+    if (fps <= 0 || fps > 120)
+        fps = 30.0; // Fallback
+    frameDuration = 1.0 / fps;
 
-  // Get video properties
-  AVStream *videoStream = formatContext->streams[streamIndex];
-  fps = av_q2d(videoStream->r_frame_rate);
-  if (fps <= 0 || fps > 120)
-    fps = 30.0; // Fallback
-  frameDuration = 1.0 / fps;
+    totalDuration = formatContext->duration / static_cast<double>(AV_TIME_BASE);
 
-  totalDuration = formatContext->duration / static_cast<double>(AV_TIME_BASE);
+    // Get and scale dimensions
+    int origWidth = codecContext->width;
+    int origHeight = codecContext->height;
 
-  // Get and scale dimensions
-  int origWidth = codecContext->width;
-  int origHeight = codecContext->height;
+    if (origWidth > config.maxWidth || origHeight > config.maxHeight) {
+        double scale = std::min(static_cast<double>(config.maxWidth) / origWidth,
+                                static_cast<double>(config.maxHeight) / origHeight);
+        videoWidth = static_cast<int>(origWidth * scale);
+        videoHeight = static_cast<int>(origHeight * scale);
+    } else {
+        videoWidth = origWidth;
+        videoHeight = origHeight;
+    }
 
-  if (origWidth > config.maxWidth || origHeight > config.maxHeight) {
-    double scale = std::min(static_cast<double>(config.maxWidth) / origWidth,
-                            static_cast<double>(config.maxHeight) / origHeight);
-    videoWidth = static_cast<int>(origWidth * scale);
-    videoHeight = static_cast<int>(origHeight * scale);
-  } else {
-    videoWidth = origWidth;
-    videoHeight = origHeight;
-  }
+    // Clear statistics
+    frameQueue->clear();
+    decodedFrames = 0;
+    droppedFrames = 0;
+    renderedFrames = 0;
 
-  // Clear statistics
-  frameQueue->clear();
-  decodedFrames = 0;
-  droppedFrames = 0;
-  renderedFrames = 0;
+    std::cout << "VideoModule::loadStream complete. formatContext=" << formatContext 
+              << ", streamIndex=" << streamIndex << std::endl;
+    std::cout << "Resolution: " << videoWidth << "x" << videoHeight
+              << " (original: " << origWidth << "x" << origHeight << ")" << std::endl;
+    std::cout << "FPS: " << fps << ", Duration: " << totalDuration << "s" << std::endl;
 
-  std::cout << "Video stream loaded successfully" << std::endl;
-  std::cout << "Resolution: " << videoWidth << "x" << videoHeight
-            << " (original: " << origWidth << "x" << origHeight << ")"
-            << std::endl;
-  std::cout << "FPS: " << fps << ", Duration: " << totalDuration << "s"
-            << std::endl;
-
-  return true;
+    return true;
 }
+
 
 bool VideoModule::setupDecoder() {
     AVCodecParameters *codecParams =
@@ -182,41 +183,84 @@ bool VideoModule::setupDecoder() {
 
 
 void VideoModule::startDecoding() {
-  if (!isStreamLoaded()) {
-    std::cerr << "Cannot start decoding: no stream loaded" << std::endl;
-    return;
-  }
-
-  if (isDecoding) {
-    std::cout << "Already decoding" << std::endl;
-    return;
-  }
-
-  shouldStop = false;
-  isDecoding = true;
-
-  decodeThread = std::thread(&VideoModule::decodeThreadFunction, this);
-
-  std::cout << "Video decoding started" << std::endl;
+    if (!isStreamLoaded()) {
+        std::cerr << "Cannot start decoding: no stream loaded" << std::endl;
+        return;
+    }
+    
+    if (isDecoding) return;
+    
+    shouldStop = false;
+    isDecoding = true;
+    shouldRender = true;
+    
+    decodeThread = std::thread(&VideoModule::decodeThreadFunction, this);
+    renderThread = std::thread(&VideoModule::renderThreadFunction, this);
+    
+    std::cout << "Video decoding started" << std::endl;
 }
 
 void VideoModule::stopDecoding() {
-  if (!isDecoding)
-    return;
+    if (!isDecoding) return;
+    
+    isDecoding = false;
+    shouldRender = false;
+    shouldStop = true;
+    
+    if (decodeThread.joinable()) {
+        decodeThread.join();
+    }
+    
+    if (renderThread.joinable()) {
+        renderThread.join();
+    }
+    
+    std::cout << "Video decoding stopped" << std::endl;
+}
 
-  isDecoding = false;
-  shouldStop = true;
-
-  if (decodeThread.joinable()) {
-    decodeThread.join();
-  }
-
-  std::cout << "Video decoding stopped" << std::endl;
+void VideoModule::renderThreadFunction() {
+    auto lastFrameTime = std::chrono::steady_clock::now();
+    const auto frameInterval = std::chrono::microseconds(static_cast<int64_t>(frameDuration * 1000000));
+    
+    while (shouldRender && !shouldStop) {
+        auto currentTime = std::chrono::steady_clock::now();
+        
+        if (currentTime - lastFrameTime >= frameInterval) {
+            // Update current frame from queue
+            FrameBuffer fb;
+            while (frameQueue->pop(fb)) {
+                if (fb.valid && !fb.frame.empty()) {
+                    std::lock_guard<std::mutex> lock(currentFrameMutex);
+                    currentFrame = std::move(fb.frame);
+                    currentFrameTimestamp = fb.timestamp;
+                    renderedFrames++;
+                    break; // Take first valid frame
+                }
+            }
+            lastFrameTime = currentTime;
+        }
+        
+        std::this_thread::sleep_for(std::chrono::microseconds(1000));
+    }
 }
 
 void VideoModule::decodeThreadFunction() {
     std::cout << "DEBUG: Video decode thread started" << std::endl;
+    std::cout << "DEBUG: formatContext=" << formatContext 
+              << ", streamIndex=" << streamIndex 
+              << ", shouldStop=" << shouldStop.load()
+              << ", isDecoding=" << isDecoding.load() << std::endl;
     
+    if (!formatContext) {
+        std::cerr << "ERROR: formatContext is NULL in decode thread!" << std::endl;
+        return;
+    }
+    
+    if (streamIndex < 0) {
+        std::cerr << "ERROR: invalid streamIndex in decode thread!" << std::endl;
+        return;
+    }
+
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
     AVFrame* hw_frame = nullptr;
@@ -306,68 +350,89 @@ void VideoModule::decodeThreadFunction() {
 }
 
 
+
 bool VideoModule::convertAVFrameToMat(AVFrame* frame, cv::Mat& output) {
-    if (!frame || !frame->data[0]) return false;
-    
-    // Simple approach: use OpenCV's built-in conversion
-    if (frame->format == AV_PIX_FMT_YUV420P) {
-        // Create temporary Mat from frame data
-        cv::Mat yuv_image(frame->height + frame->height/2, frame->width, CV_8UC1);
-        
-        // Copy Y plane
-        memcpy(yuv_image.data, frame->data[0], frame->width * frame->height);
-        
-        // Copy UV planes
-        for (int i = 0; i < frame->height/2; i++) {
-            memcpy(yuv_image.data + frame->width * frame->height + i * frame->width/2,
-                   frame->data[1] + i * frame->linesize[1], frame->width/2);
-            memcpy(yuv_image.data + frame->width * frame->height * 5/4 + i * frame->width/2,
-                   frame->data[2] + i * frame->linesize[2], frame->width/2);
-        }
-        
-        cv::Mat bgr_image;
-        cv::cvtColor(yuv_image, bgr_image, cv::COLOR_YUV420p2BGR);
-        
-        if (bgr_image.cols != videoWidth || bgr_image.rows != videoHeight) {
-            cv::resize(bgr_image, output, cv::Size(videoWidth, videoHeight));
-        } else {
-            output = bgr_image;
-        }
-        
-        return true;
+    if (!frame || !frame->data[0] || frame->format != AV_PIX_FMT_YUV420P) {
+        return false;
     }
     
-    return false; // Unsupported format
+    // Create a continuous buffer in YUV420p format for OpenCV
+    int y_size = frame->width * frame->height;
+    int uv_size = (frame->width / 2) * (frame->height / 2);
+    
+    std::vector<uint8_t> yuv_buffer(y_size + 2 * uv_size);
+    
+    // Copy Y plane
+    for (int i = 0; i < frame->height; i++) {
+        memcpy(yuv_buffer.data() + i * frame->width,
+               frame->data[0] + i * frame->linesize[0],
+               frame->width);
+    }
+    
+    // Copy U plane
+    for (int i = 0; i < frame->height / 2; i++) {
+        memcpy(yuv_buffer.data() + y_size + i * (frame->width / 2),
+               frame->data[1] + i * frame->linesize[1],
+               frame->width / 2);
+    }
+    
+    // Copy V plane
+    for (int i = 0; i < frame->height / 2; i++) {
+        memcpy(yuv_buffer.data() + y_size + uv_size + i * (frame->width / 2),
+               frame->data[2] + i * frame->linesize[2],
+               frame->width / 2);
+    }
+    
+    // Create Mat from the buffer
+    cv::Mat yuv_img(frame->height * 3 / 2, frame->width, CV_8UC1, yuv_buffer.data());
+    
+    // Convert YUV420p to BGR
+    cv::Mat bgr_img;
+    cv::cvtColor(yuv_img, bgr_img, cv::COLOR_YUV2BGR_I420);
+    
+    // Resize if needed
+    if (bgr_img.cols != videoWidth || bgr_img.rows != videoHeight) {
+        cv::resize(bgr_img, output, cv::Size(videoWidth, videoHeight));
+    } else {
+        output = bgr_img.clone();
+    }
+    
+    return !output.empty();
 }
 
 cv::Mat VideoModule::getCurrentFrame(double targetTime) {
-  updateCurrentFrame(targetTime);
-
-  std::lock_guard<std::mutex> lock(currentFrameMutex);
-  if (!currentFrame.empty()) {
-    renderedFrames++;
-    return currentFrame.clone();
-  }
-
-  return cv::Mat();
+    std::cout << "DEBUG getCurrentFrame: targetTime=" << targetTime << std::endl;
+    updateCurrentFrame(targetTime);
+    
+    std::lock_guard<std::mutex> lock(currentFrameMutex);
+    if (!currentFrame.empty()) {
+        renderedFrames++;
+        return currentFrame.clone();
+    }
+    
+    std::cout << "DEBUG: getCurrentFrame returning empty" << std::endl;
+    return cv::Mat();
 }
 
 cv::Mat VideoModule::getCurrentFrameImmediate() {
-  std::lock_guard<std::mutex> lock(currentFrameMutex);
-  if (!currentFrame.empty()) {
-    return currentFrame.clone();
-  }
-  return cv::Mat();
+    std::lock_guard<std::mutex> lock(currentFrameMutex);
+    if (!currentFrame.empty()) {
+        return currentFrame.clone();
+    }
+    return cv::Mat();
 }
 
 void VideoModule::updateCurrentFrame(double targetTime, double tolerance) {
-    FrameBuffer fb;
+    std::cout << "DEBUG updateCurrentFrame called, targetTime=" << targetTime 
+              << ", queue size=" << frameQueue->size() << std::endl;
     
-    // Just get the most recent frame from the queue
+    FrameBuffer fb;
     FrameBuffer lastValidFrame;
     bool hasFrame = false;
     
     while (frameQueue->pop(fb)) {
+        std::cout << "DEBUG: Popped frame, valid=" << fb.valid 
+                  << ", timestamp=" << fb.timestamp << std::endl;
         if (fb.valid) {
             lastValidFrame = std::move(fb);
             hasFrame = true;
@@ -378,6 +443,10 @@ void VideoModule::updateCurrentFrame(double targetTime, double tolerance) {
         std::lock_guard<std::mutex> lock(currentFrameMutex);
         currentFrame = std::move(lastValidFrame.frame);
         currentFrameTimestamp = lastValidFrame.timestamp;
+        std::cout << "DEBUG: Updated current frame, size=" << currentFrame.cols 
+                  << "x" << currentFrame.rows << std::endl;
+    } else {
+        std::cout << "DEBUG: No valid frame found in queue" << std::endl;
     }
 }
 
