@@ -10,7 +10,7 @@ MediaController::MediaController()
     videoModule = std::make_unique<VideoModule>();
     
     // Temporarily disable sync to test
-    syncEnabled = false;
+    syncEnabled = true;
 }
 
 MediaController::~MediaController() {
@@ -267,9 +267,15 @@ bool MediaController::play() {
     
     std::cout << "Starting playback..." << std::endl;
     
-    // Start video decoding first (if available)
+    // Start video decoding first (this will preload the buffer)
     if (hasVideo()) {
         videoModule->startDecoding();
+        
+        // Wait for video buffer to be ready
+        if (!videoModule->isReadyToPlay()) {
+            std::cout << "Waiting for video buffer..." << std::endl;
+            videoModule->waitForBuffer();
+        }
     }
     
     // Start audio playback (master clock)
@@ -338,12 +344,6 @@ bool MediaController::seek(double timeSeconds) {
         return false;
     }
     
-    // Check if we have any loaded contexts
-    if (!audioFormatContext && !videoFormatContext) {
-        setError("No media loaded");
-        return false;
-    }
-    
     std::cout << "Seeking to " << timeSeconds << "s..." << std::endl;
     setState(MediaState::SEEKING);
     
@@ -357,7 +357,7 @@ bool MediaController::seek(double timeSeconds) {
         videoModule->stopDecoding();
     }
     
-    // Perform seek operations on both contexts
+    // Perform seek operations
     bool success = true;
     
     if (hasAudio()) {
@@ -383,7 +383,8 @@ bool MediaController::seek(double timeSeconds) {
     // Resume playback if we were playing
     if (wasPlaying) {
         if (hasVideo()) {
-            videoModule->startDecoding();
+            videoModule->startDecoding();  // This will rebuffer automatically
+            videoModule->waitForBuffer();
         }
         if (hasAudio()) {
             audioModule->play();
@@ -402,23 +403,15 @@ cv::Mat MediaController::getCurrentVideoFrame() {
         return cv::Mat();
     }
     
-    cv::Mat frame;
-    if (syncEnabled && hasAudio()) {
+    // Always use audio time for sync
+    if (hasAudio()) {
         double audioTime = audioModule->getCurrentTime();
-        frame = videoModule->getCurrentFrame(audioTime);
-        std::cout << "DEBUG: Requesting video frame for audio time: " << audioTime << std::endl;
+        return videoModule->getCurrentFrame(audioTime);
     } else {
-        frame = videoModule->getCurrentFrameImmediate();
-        std::cout << "DEBUG: Requesting immediate video frame" << std::endl;
+        // Video-only playback - use video's own timestamp
+        VideoStats stats = videoModule->getStats();
+        return videoModule->getCurrentFrame(stats.currentTimestamp);
     }
-    
-    if (frame.empty()) {
-        std::cout << "DEBUG: Received empty video frame" << std::endl;
-    } else {
-        std::cout << "DEBUG: Received video frame " << frame.cols << "x" << frame.rows << std::endl;
-    }
-    
-    return frame;
 }
 
 void MediaController::setVolume(float volume) {

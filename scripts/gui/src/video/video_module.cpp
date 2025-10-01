@@ -1,201 +1,161 @@
 #include "video_module.h"
-#include <algorithm>
 #include <iostream>
+#include <algorithm>
+#include <limits>
 
-// FrameBuffer implementation
 FrameBuffer::FrameBuffer() : timestamp(0.0), valid(false) {}
 
-FrameBuffer::FrameBuffer(FrameBuffer &&other) noexcept
-    : frame(std::move(other.frame)), timestamp(other.timestamp),
-      valid(other.valid) {
-  other.valid = false;
-}
-
-FrameBuffer &FrameBuffer::operator=(FrameBuffer &&other) noexcept {
-  if (this != &other) {
-    frame = std::move(other.frame);
-    timestamp = other.timestamp;
-    valid = other.valid;
+FrameBuffer::FrameBuffer(FrameBuffer&& other) noexcept 
+    : frame(std::move(other.frame)), timestamp(other.timestamp), valid(other.valid) {
     other.valid = false;
-  }
-  return *this;
 }
 
-// VideoModule implementation
-VideoModule::VideoModule()
+FrameBuffer& FrameBuffer::operator=(FrameBuffer&& other) noexcept {
+    if (this != &other) {
+        frame = std::move(other.frame);
+        timestamp = other.timestamp;
+        valid = other.valid;
+        other.valid = false;
+    }
+    return *this;
+}
+
+VideoModule::VideoModule() 
     : formatContext(nullptr), codecContext(nullptr), streamIndex(-1),
-      hwDeviceType(AV_HWDEVICE_TYPE_NONE), hwDeviceCtx(nullptr), videoWidth(0),
-      videoHeight(0), fps(30.0), totalDuration(0.0), frameDuration(1.0 / 30.0),
-      currentFrameTimestamp(0.0) {
-
-  frameQueue =
-      std::make_unique<LockFreeRingBuffer<FrameBuffer, MAX_FRAME_QUEUE_SIZE>>();
+      hwDeviceType(AV_HWDEVICE_TYPE_NONE), hwDeviceCtx(nullptr),
+      videoWidth(0), videoHeight(0), fps(30.0), totalDuration(0.0), frameDuration(1.0/30.0),
+      maxQueueSize(120), currentFrameTimestamp(0.0) {
 }
 
-VideoModule::~VideoModule() { shutdown(); }
+VideoModule::~VideoModule() {
+    shutdown();
+}
 
-bool VideoModule::initialize(const VideoConfig &cfg) {
-  std::cout << "Initializing VideoModule..." << std::endl;
-
-  config = cfg;
-
-  //if (config.enableHardwareAccel) {
-  //  initializeHardwareAccel();
-  //}
-
-  std::cout << "VideoModule initialized successfully" << std::endl;
-  return true;
+bool VideoModule::initialize(const VideoConfig& cfg) {
+    std::cout << "Initializing VideoModule..." << std::endl;
+    config = cfg;
+    maxQueueSize = config.frameQueueSize;
+    std::cout << "VideoModule initialized successfully" << std::endl;
+    return true;
 }
 
 bool VideoModule::initializeHardwareAccel() {
-  const char *hw_types[] = {"vaapi", "nvdec", "dxva2", "videotoolbox"};
-
-  for (const char *type_name : hw_types) {
-    AVHWDeviceType type = av_hwdevice_find_type_by_name(type_name);
-    if (type != AV_HWDEVICE_TYPE_NONE) {
-      if (av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0) >=
-          0) {
-        hwDeviceType = type;
-        std::cout << "Hardware acceleration enabled: " << type_name
-                  << std::endl;
-        return true;
-      }
+    const char* hw_types[] = {"vaapi", "nvdec", "dxva2", "videotoolbox"};
+    
+    for (const char* type_name : hw_types) {
+        AVHWDeviceType type = av_hwdevice_find_type_by_name(type_name);
+        if (type != AV_HWDEVICE_TYPE_NONE) {
+            if (av_hwdevice_ctx_create(&hwDeviceCtx, type, nullptr, nullptr, 0) >= 0) {
+                hwDeviceType = type;
+                std::cout << "Hardware acceleration enabled: " << type_name << std::endl;
+                return true;
+            }
+        }
     }
-  }
-
-  std::cout << "Hardware acceleration not available, using software decoding"
-            << std::endl;
-  return false;
+    
+    std::cout << "Hardware acceleration not available" << std::endl;
+    return false;
 }
 
 bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
-    if (!ctx) {
-        std::cerr << "VideoModule: Null format context" << std::endl;
-        return false;
-    }
-    
-    if (videoStreamIndex < 0 || videoStreamIndex >= static_cast<int>(ctx->nb_streams)) {
-        std::cerr << "VideoModule: Invalid stream index " << videoStreamIndex 
-                  << " (total streams: " << ctx->nb_streams << ")" << std::endl;
+    if (!ctx || videoStreamIndex < 0 || videoStreamIndex >= static_cast<int>(ctx->nb_streams)) {
+        std::cerr << "VideoModule: Invalid parameters" << std::endl;
         return false;
     }
     
     AVCodecParameters* codecpar = ctx->streams[videoStreamIndex]->codecpar;
     if (codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
-        std::cerr << "VideoModule: Stream " << videoStreamIndex 
-                  << " is not a video stream" << std::endl;
+        std::cerr << "VideoModule: Not a video stream" << std::endl;
         return false;
     }
     
-    std::cout << "VideoModule::loadStream called with ctx=" << ctx 
-              << ", streamIndex=" << videoStreamIndex << std::endl;
-
-    formatContext = ctx;   // 🔑 Ensure assignment happens before setup
+    formatContext = ctx;
     streamIndex = videoStreamIndex;
     
     if (!setupDecoder()) {
-        std::cerr << "VideoModule: Failed to setup video decoder" << std::endl;
+        std::cerr << "Failed to setup video decoder" << std::endl;
         return false;
     }
-
-    // Get video properties
-    AVStream *videoStream = formatContext->streams[streamIndex];
+    
+    AVStream* videoStream = formatContext->streams[streamIndex];
     fps = av_q2d(videoStream->r_frame_rate);
-    if (fps <= 0 || fps > 120)
-        fps = 30.0; // Fallback
+    if (fps <= 0 || fps > 120) fps = 30.0;
     frameDuration = 1.0 / fps;
-
+    
     totalDuration = formatContext->duration / static_cast<double>(AV_TIME_BASE);
-
-    // Get and scale dimensions
-    int origWidth = codecContext->width;
-    int origHeight = codecContext->height;
-
-    if (origWidth > config.maxWidth || origHeight > config.maxHeight) {
-        double scale = std::min(static_cast<double>(config.maxWidth) / origWidth,
-                                static_cast<double>(config.maxHeight) / origHeight);
-        videoWidth = static_cast<int>(origWidth * scale);
-        videoHeight = static_cast<int>(origHeight * scale);
-    } else {
-        videoWidth = origWidth;
-        videoHeight = origHeight;
+    
+    videoWidth = codecContext->width;
+    videoHeight = codecContext->height;
+    
+    {
+        std::lock_guard<std::mutex> lock(frameQueueMutex);
+        frameQueue.clear();
     }
-
-    // Clear statistics
-    frameQueue->clear();
     decodedFrames = 0;
     droppedFrames = 0;
     renderedFrames = 0;
-
-    std::cout << "VideoModule::loadStream complete. formatContext=" << formatContext 
-              << ", streamIndex=" << streamIndex << std::endl;
-    std::cout << "Resolution: " << videoWidth << "x" << videoHeight
-              << " (original: " << origWidth << "x" << origHeight << ")" << std::endl;
-    std::cout << "FPS: " << fps << ", Duration: " << totalDuration << "s" << std::endl;
-
+    
+    std::cout << "Video loaded: " << videoWidth << "x" << videoHeight 
+              << " @ " << fps << "fps" << std::endl;
+    
     return true;
 }
 
-
 bool VideoModule::setupDecoder() {
-    AVCodecParameters *codecParams =
-        formatContext->streams[streamIndex]->codecpar;
-    const AVCodec *codec = avcodec_find_decoder(codecParams->codec_id);
-
-    if (!codec) {
-        std::cerr << "Video codec not found" << std::endl;
-        return false;
-    }
-
+    AVCodecParameters* codecParams = formatContext->streams[streamIndex]->codecpar;
+    const AVCodec* codec = avcodec_find_decoder(codecParams->codec_id);
+    
+    if (!codec) return false;
+    
     codecContext = avcodec_alloc_context3(codec);
-    if (!codecContext) {
-        std::cerr << "Failed to allocate video codec context" << std::endl;
-        return false;
-    }
-
+    if (!codecContext) return false;
+    
     if (avcodec_parameters_to_context(codecContext, codecParams) < 0) {
-        std::cerr << "Failed to copy video codec parameters" << std::endl;
         avcodec_free_context(&codecContext);
         return false;
     }
-
-    // Try to set hardware acceleration
+    
     if (hwDeviceCtx) {
         codecContext->hw_device_ctx = av_buffer_ref(hwDeviceCtx);
     }
-
-    // --- New resilience settings ---
-    av_opt_set(codecContext->priv_data, "threads", "auto", 0);
-    av_opt_set(codecContext->priv_data, "thread_type", "frame", 0);
-
+    
     codecContext->error_concealment = FF_EC_GUESS_MVS | FF_EC_DEBLOCK;
-    codecContext->skip_loop_filter = AVDISCARD_DEFAULT;
-    // -------------------------------
-
+    
     if (avcodec_open2(codecContext, codec, nullptr) < 0) {
-        std::cerr << "Failed to open video codec" << std::endl;
         avcodec_free_context(&codecContext);
         return false;
     }
-
+    
     return true;
 }
 
-
 void VideoModule::startDecoding() {
-    if (!isStreamLoaded()) {
-        std::cerr << "Cannot start decoding: no stream loaded" << std::endl;
-        return;
-    }
-    
-    if (isDecoding) return;
+    if (!isStreamLoaded() || isDecoding) return;
     
     shouldStop = false;
     isDecoding = true;
-    shouldRender = true;
+    isBuffering = true;
     
     decodeThread = std::thread(&VideoModule::decodeThreadFunction, this);
-    renderThread = std::thread(&VideoModule::renderThreadFunction, this);
+    
+    std::cout << "Preloading video buffer..." << std::endl;
+    
+    while (isBuffering && !shouldStop) {
+        size_t queueSize;
+        {
+            std::lock_guard<std::mutex> lock(frameQueueMutex);
+            queueSize = frameQueue.size();
+        }
+        
+        double fullness = static_cast<double>(queueSize) / maxQueueSize;
+        
+        if (fullness >= bufferFullnessThreshold) {
+            isBuffering = false;
+            std::cout << "Buffer ready: " << queueSize << " frames" << std::endl;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
     
     std::cout << "Video decoding started" << std::endl;
 }
@@ -204,73 +164,18 @@ void VideoModule::stopDecoding() {
     if (!isDecoding) return;
     
     isDecoding = false;
-    shouldRender = false;
     shouldStop = true;
     
     if (decodeThread.joinable()) {
         decodeThread.join();
     }
     
-    if (renderThread.joinable()) {
-        renderThread.join();
-    }
-    
     std::cout << "Video decoding stopped" << std::endl;
 }
 
-void VideoModule::renderThreadFunction() {
-    auto lastFrameTime = std::chrono::steady_clock::now();
-    const auto frameInterval = std::chrono::microseconds(static_cast<int64_t>(frameDuration * 1000000));
-    
-    while (shouldRender && !shouldStop) {
-        auto currentTime = std::chrono::steady_clock::now();
-        
-        if (currentTime - lastFrameTime >= frameInterval) {
-            // Update current frame from queue
-            FrameBuffer fb;
-            while (frameQueue->pop(fb)) {
-                if (fb.valid && !fb.frame.empty()) {
-                    std::lock_guard<std::mutex> lock(currentFrameMutex);
-                    currentFrame = std::move(fb.frame);
-                    currentFrameTimestamp = fb.timestamp;
-                    renderedFrames++;
-                    break; // Take first valid frame
-                }
-            }
-            lastFrameTime = currentTime;
-        }
-        
-        std::this_thread::sleep_for(std::chrono::microseconds(1000));
-    }
-}
-
 void VideoModule::decodeThreadFunction() {
-    std::cout << "DEBUG: Video decode thread started" << std::endl;
-    std::cout << "DEBUG: formatContext=" << formatContext 
-              << ", streamIndex=" << streamIndex 
-              << ", shouldStop=" << shouldStop.load()
-              << ", isDecoding=" << isDecoding.load() << std::endl;
-    
-    if (!formatContext) {
-        std::cerr << "ERROR: formatContext is NULL in decode thread!" << std::endl;
-        return;
-    }
-    
-    if (streamIndex < 0) {
-        std::cerr << "ERROR: invalid streamIndex in decode thread!" << std::endl;
-        return;
-    }
-
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
-    AVFrame* hw_frame = nullptr;
-    
-    if (hwDeviceCtx) {
-        hw_frame = av_frame_alloc();
-    }
-    
-    int packets_read = 0;
-    int frames_decoded = 0;
     
     while (!shouldStop && isDecoding) {
         if (seekRequested.load()) {
@@ -278,141 +183,184 @@ void VideoModule::decodeThreadFunction() {
             seekRequested = false;
         }
         
-        if (frameQueue->size() < config.frameQueueSize * 0.8) {
-            int read_result = av_read_frame(formatContext, packet);
-            if (read_result >= 0) {
-                packets_read++;
-                
+        size_t queueSize;
+        {
+            std::lock_guard<std::mutex> lock(frameQueueMutex);
+            queueSize = frameQueue.size();
+        }
+        
+        // Decode aggressively - keep queue as full as possible
+        if (queueSize < maxQueueSize) {
+            if (av_read_frame(formatContext, packet) >= 0) {
                 if (packet->stream_index == streamIndex) {
-                    std::cout << "DEBUG: Processing video packet " << packets_read << std::endl;
-                    
                     if (avcodec_send_packet(codecContext, packet) >= 0) {
                         while (avcodec_receive_frame(codecContext, frame) >= 0) {
-                            frames_decoded++;
-                            std::cout << "DEBUG: Decoded video frame " << frames_decoded << std::endl;
-                            
-                            AVFrame* decode_frame = frame;
-                            
-                            // Handle hardware decoding
-                            if (hwDeviceCtx && hw_frame) {
-                                if (avcodec_receive_frame(codecContext, hw_frame) >= 0) {
-                                    if (av_hwframe_transfer_data(frame, hw_frame, 0) >= 0) {
-                                        decode_frame = frame;
-                                    }
-                                }
-                            }
-                            
-                            if (decode_frame->data[0]) {
+                            if (frame->data[0]) {
                                 FrameBuffer fb;
-                                if (convertAVFrameToMat(decode_frame, fb.frame)) {
+                                if (convertAVFrameToMat(frame, fb.frame)) {
                                     AVStream* stream = formatContext->streams[streamIndex];
-                                    if (decode_frame->pts != AV_NOPTS_VALUE) {
-                                        fb.timestamp = decode_frame->pts * av_q2d(stream->time_base);
+                                    if (frame->pts != AV_NOPTS_VALUE) {
+                                        fb.timestamp = frame->pts * av_q2d(stream->time_base);
                                     } else {
-                                        fb.timestamp = frames_decoded / fps;
+                                        fb.timestamp = decodedFrames.load() / fps;
                                     }
                                     fb.valid = true;
                                     
-                                    if (!frameQueue->push(std::move(fb))) {
-                                        droppedFrames++;
-                                        std::cout << "DEBUG: Frame queue full, dropped frame" << std::endl;
-                                    } else {
+                                    {
+                                        std::lock_guard<std::mutex> lock(frameQueueMutex);
+                                        frameQueue.push_back(std::move(fb));
                                         decodedFrames++;
-                                        std::cout << "DEBUG: Added frame to queue, queue size: " << frameQueue->size() << std::endl;
                                     }
-                                } else {
-                                    std::cout << "DEBUG: convertAVFrameToMat failed" << std::endl;
                                 }
-                            } else {
-                                std::cout << "DEBUG: No frame data" << std::endl;
                             }
                         }
-                    } else {
-                        std::cout << "DEBUG: avcodec_send_packet failed" << std::endl;
                     }
                 }
                 av_packet_unref(packet);
             } else {
-                std::cout << "DEBUG: av_read_frame failed or EOF: " << read_result << std::endl;
+                // EOF
+                isDecoding = false;
                 break;
             }
         } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(1000));
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
     
-    std::cout << "DEBUG: Video decode thread ending. Packets: " << packets_read 
-              << ", Frames: " << frames_decoded << std::endl;
-    
     av_frame_free(&frame);
-    if (hw_frame) av_frame_free(&hw_frame);
     av_packet_free(&packet);
 }
-
-
 
 bool VideoModule::convertAVFrameToMat(AVFrame* frame, cv::Mat& output) {
     if (!frame || !frame->data[0] || frame->format != AV_PIX_FMT_YUV420P) {
         return false;
     }
     
-    // Create a continuous buffer in YUV420p format for OpenCV
     int y_size = frame->width * frame->height;
     int uv_size = (frame->width / 2) * (frame->height / 2);
     
     std::vector<uint8_t> yuv_buffer(y_size + 2 * uv_size);
     
-    // Copy Y plane
     for (int i = 0; i < frame->height; i++) {
         memcpy(yuv_buffer.data() + i * frame->width,
                frame->data[0] + i * frame->linesize[0],
                frame->width);
     }
     
-    // Copy U plane
     for (int i = 0; i < frame->height / 2; i++) {
         memcpy(yuv_buffer.data() + y_size + i * (frame->width / 2),
                frame->data[1] + i * frame->linesize[1],
                frame->width / 2);
     }
     
-    // Copy V plane
     for (int i = 0; i < frame->height / 2; i++) {
         memcpy(yuv_buffer.data() + y_size + uv_size + i * (frame->width / 2),
                frame->data[2] + i * frame->linesize[2],
                frame->width / 2);
     }
     
-    // Create Mat from the buffer
     cv::Mat yuv_img(frame->height * 3 / 2, frame->width, CV_8UC1, yuv_buffer.data());
-    
-    // Convert YUV420p to BGR
-    cv::Mat bgr_img;
-    cv::cvtColor(yuv_img, bgr_img, cv::COLOR_YUV2BGR_I420);
-    
-    // Resize if needed
-    if (bgr_img.cols != videoWidth || bgr_img.rows != videoHeight) {
-        cv::resize(bgr_img, output, cv::Size(videoWidth, videoHeight));
-    } else {
-        output = bgr_img.clone();
-    }
+    cv::cvtColor(yuv_img, output, cv::COLOR_YUV2BGR_I420);
     
     return !output.empty();
 }
 
 cv::Mat VideoModule::getCurrentFrame(double targetTime) {
-    std::cout << "DEBUG getCurrentFrame: targetTime=" << targetTime << std::endl;
-    updateCurrentFrame(targetTime);
+    std::lock_guard<std::mutex> queueLock(frameQueueMutex);
     
-    std::lock_guard<std::mutex> lock(currentFrameMutex);
-    if (!currentFrame.empty()) {
+    // DEBUG: Print first 10 calls
+    static int debugCount = 0;
+    if (debugCount < 10) {
+        std::cout << "getCurrentFrame called - targetTime: " << targetTime 
+                  << ", queue size: " << frameQueue.size();
+        if (!frameQueue.empty()) {
+            std::cout << ", first frame ts: " << frameQueue.front().timestamp
+                      << ", last frame ts: " << frameQueue.back().timestamp;
+        }
+        std::cout << std::endl;
+    }
+    
+    // Drop old frames (more than 100ms behind)
+    int droppedThisCall = 0;
+    while (!frameQueue.empty() && frameQueue.front().timestamp < targetTime - 0.1) {
+        frameQueue.pop_front();
+        droppedFrames++;
+        droppedThisCall++;
+    }
+    
+    if (droppedThisCall > 0 && debugCount < 10) {
+        std::cout << "Dropped " << droppedThisCall << " old frames" << std::endl;
+    }
+    
+    // Check buffer health
+    double fullness = static_cast<double>(frameQueue.size()) / maxQueueSize;
+    if (fullness < bufferLowThreshold && !isBuffering) {
+        isBuffering = true;
+    } else if (isBuffering && fullness >= bufferFullnessThreshold) {
+        isBuffering = false;
+    }
+    
+    // If buffering, return last displayed frame
+    if (isBuffering) {
+        std::lock_guard<std::mutex> frameLock(currentFrameMutex);
+        if (!currentFrame.empty()) {
+            if (debugCount < 10) {
+                std::cout << "Buffering active - returning last frame at ts: " 
+                          << currentFrameTimestamp << std::endl;
+            }
+            debugCount++;
+            return currentFrame.clone();
+        }
+        debugCount++;
+        return cv::Mat();
+    }
+    
+    // Find best frame for target time
+    FrameBuffer* bestFrame = nullptr;
+    double bestDiff = std::numeric_limits<double>::max();
+    
+    for (auto& fb : frameQueue) {
+        if (!fb.valid) continue;
+        
+        double diff = std::abs(fb.timestamp - targetTime);
+        if (diff < bestDiff) {
+            bestFrame = &fb;
+            bestDiff = diff;
+        }
+        
+        // Stop searching if too far ahead
+        if (fb.timestamp > targetTime + 0.05) break;
+    }
+    
+    // Update current frame if found good match
+    if (bestFrame && bestDiff < 0.1) {
+        std::lock_guard<std::mutex> frameLock(currentFrameMutex);
+        currentFrame = bestFrame->frame.clone();
+        currentFrameTimestamp = bestFrame->timestamp;
         renderedFrames++;
+        if (debugCount < 10) {
+            std::cout << "Updated current frame - ts: " << currentFrameTimestamp 
+                      << ", diff: " << bestDiff << std::endl;
+        }
+    }
+    
+    std::lock_guard<std::mutex> frameLock(currentFrameMutex);
+    if (!currentFrame.empty()) {
+        if (debugCount < 10) {
+            std::cout << "Returning current frame - ts: " 
+                      << currentFrameTimestamp << std::endl;
+        }
+        debugCount++;
         return currentFrame.clone();
     }
     
-    std::cout << "DEBUG: getCurrentFrame returning empty" << std::endl;
+    if (debugCount < 10) {
+        std::cout << "No frame available, returning empty" << std::endl;
+    }
+    debugCount++;
     return cv::Mat();
 }
+
 
 cv::Mat VideoModule::getCurrentFrameImmediate() {
     std::lock_guard<std::mutex> lock(currentFrameMutex);
@@ -422,109 +370,86 @@ cv::Mat VideoModule::getCurrentFrameImmediate() {
     return cv::Mat();
 }
 
-void VideoModule::updateCurrentFrame(double targetTime, double tolerance) {
-    std::cout << "DEBUG updateCurrentFrame called, targetTime=" << targetTime 
-              << ", queue size=" << frameQueue->size() << std::endl;
-    
-    FrameBuffer fb;
-    FrameBuffer lastValidFrame;
-    bool hasFrame = false;
-    
-    while (frameQueue->pop(fb)) {
-        std::cout << "DEBUG: Popped frame, valid=" << fb.valid 
-                  << ", timestamp=" << fb.timestamp << std::endl;
-        if (fb.valid) {
-            lastValidFrame = std::move(fb);
-            hasFrame = true;
-        }
-    }
-    
-    if (hasFrame) {
-        std::lock_guard<std::mutex> lock(currentFrameMutex);
-        currentFrame = std::move(lastValidFrame.frame);
-        currentFrameTimestamp = lastValidFrame.timestamp;
-        std::cout << "DEBUG: Updated current frame, size=" << currentFrame.cols 
-                  << "x" << currentFrame.rows << std::endl;
-    } else {
-        std::cout << "DEBUG: No valid frame found in queue" << std::endl;
-    }
-}
-
 bool VideoModule::seek(double timeSeconds) {
-  if (!isStreamLoaded() || timeSeconds < 0 || timeSeconds > totalDuration) {
-    return false;
-  }
-
-  seekTargetTime = timeSeconds;
-  seekRequested = true;
-
-  std::cout << "Video seek requested to: " << timeSeconds << "s" << std::endl;
-  return true;
+    if (!isStreamLoaded() || timeSeconds < 0 || timeSeconds > totalDuration) {
+        return false;
+    }
+    
+    seekTargetTime = timeSeconds;
+    seekRequested = true;
+    return true;
 }
 
 void VideoModule::performSeek(double targetTime) {
-  std::cout << "Performing video seek to: " << targetTime << "s" << std::endl;
-
-  // Clear frame queue
-  frameQueue->clear();
-
-  // Seek in format context
-  int64_t ts = av_rescale_q(static_cast<int64_t>(targetTime * AV_TIME_BASE),
-                            AV_TIME_BASE_Q,
+    {
+        std::lock_guard<std::mutex> lock(frameQueueMutex);
+        frameQueue.clear();
+    }
+    
+    int64_t ts = av_rescale_q(static_cast<int64_t>(targetTime * AV_TIME_BASE), 
+                            AV_TIME_BASE_Q, 
                             formatContext->streams[streamIndex]->time_base);
-
-  if (av_seek_frame(formatContext, streamIndex, ts, AVSEEK_FLAG_BACKWARD) >=
-      0) {
-    // Flush codec buffers
-    avcodec_flush_buffers(codecContext);
-    std::cout << "Video seek completed" << std::endl;
-  } else {
-    std::cerr << "Video seek failed" << std::endl;
-  }
+    
+    if (av_seek_frame(formatContext, streamIndex, ts, AVSEEK_FLAG_BACKWARD) >= 0) {
+        avcodec_flush_buffers(codecContext);
+        isBuffering = true;
+    }
 }
 
-bool VideoModule::isInitialized() const {
-  return true; // VideoModule doesn't need complex initialization
-}
-
-bool VideoModule::isStreamLoaded() const {
-  return codecContext != nullptr && formatContext != nullptr;
-}
-
+bool VideoModule::isInitialized() const { return true; }
+bool VideoModule::isStreamLoaded() const { return codecContext != nullptr && formatContext != nullptr; }
 bool VideoModule::getIsDecoding() const { return isDecoding.load(); }
 
 VideoStats VideoModule::getStats() const {
-  VideoStats stats;
-  stats.decodedFrames = decodedFrames.load();
-  stats.droppedFrames = droppedFrames.load();
-  stats.renderedFrames = renderedFrames.load();
-  stats.queueSize = frameQueue->size();
-  stats.fps = fps;
-  stats.currentTimestamp = currentFrameTimestamp;
-  stats.hardwareAccelEnabled = (hwDeviceType != AV_HWDEVICE_TYPE_NONE);
+    VideoStats stats;
+    stats.decodedFrames = decodedFrames.load();
+    stats.droppedFrames = droppedFrames.load();
+    stats.renderedFrames = renderedFrames.load();
+    
+    {
+        std::lock_guard<std::mutex> lock(frameQueueMutex);
+        stats.queueSize = frameQueue.size();
+    }
+    
+    stats.fps = fps;
+    stats.currentTimestamp = currentFrameTimestamp;
+    stats.hardwareAccelEnabled = (hwDeviceType != AV_HWDEVICE_TYPE_NONE);
+    
+    if (stats.hardwareAccelEnabled) {
+        stats.hwAccelType = av_hwdevice_get_type_name(hwDeviceType);
+    }
+    
+    return stats;
+}
 
-  if (stats.hardwareAccelEnabled) {
-    stats.hwAccelType = av_hwdevice_get_type_name(hwDeviceType);
-  }
+bool VideoModule::isReadyToPlay() const {
+    std::lock_guard<std::mutex> lock(frameQueueMutex);
+    return static_cast<double>(frameQueue.size()) / maxQueueSize >= bufferFullnessThreshold;
+}
 
-  return stats;
+bool VideoModule::needsBuffering() const {
+    return isBuffering.load();
+}
+
+void VideoModule::waitForBuffer() {
+    while (isBuffering.load() && !shouldStop) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 }
 
 void VideoModule::shutdown() {
-  std::cout << "Shutting down VideoModule..." << std::endl;
-
-  stopDecoding();
-
-  if (codecContext) {
-    avcodec_free_context(&codecContext);
-  }
-
-  if (hwDeviceCtx) {
-    av_buffer_unref(&hwDeviceCtx);
-    hwDeviceCtx = nullptr;
-  }
-
-  formatContext = nullptr;
-  streamIndex = -1;
-  hwDeviceType = AV_HWDEVICE_TYPE_NONE;
+    stopDecoding();
+    
+    if (codecContext) {
+        avcodec_free_context(&codecContext);
+    }
+    
+    if (hwDeviceCtx) {
+        av_buffer_unref(&hwDeviceCtx);
+        hwDeviceCtx = nullptr;
+    }
+    
+    formatContext = nullptr;
+    streamIndex = -1;
+    hwDeviceType = AV_HWDEVICE_TYPE_NONE;
 }
