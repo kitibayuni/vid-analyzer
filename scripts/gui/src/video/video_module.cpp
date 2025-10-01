@@ -2,6 +2,8 @@
 #include <iostream>
 #include <algorithm>
 #include <limits>
+#include <thread>
+#include <chrono>
 
 FrameBuffer::FrameBuffer() : timestamp(0.0), valid(false) {}
 
@@ -20,11 +22,12 @@ FrameBuffer& FrameBuffer::operator=(FrameBuffer&& other) noexcept {
     return *this;
 }
 
-VideoModule::VideoModule() 
+VideoModule::VideoModule()
     : formatContext(nullptr), codecContext(nullptr), streamIndex(-1),
       hwDeviceType(AV_HWDEVICE_TYPE_NONE), hwDeviceCtx(nullptr),
       videoWidth(0), videoHeight(0), fps(30.0), totalDuration(0.0), frameDuration(1.0/30.0),
-      maxQueueSize(120), currentFrameTimestamp(0.0) {
+      maxQueueSize(120), currentFrameTimestamp(0.0), actualThreadCount(1),
+      bufferFullnessThreshold(0.3), bufferLowThreshold(0.15), decodeAheadTime(2.0) {
 }
 
 VideoModule::~VideoModule() {
@@ -62,6 +65,57 @@ bool VideoModule::initializeHardwareAccel() {
     return false;
 }
 
+int VideoModule::detectOptimalThreadCount() {
+    int hwConcurrency = std::thread::hardware_concurrency();
+
+    if (hwConcurrency == 0) {
+        std::cout << "Unable to detect CPU cores, using 2 threads" << std::endl;
+        return 2;
+    }
+
+    // Use 50-75% of available cores for moderate usage
+    // Use at least 2 threads, but cap at 8 for diminishing returns
+    int optimalThreads = std::max(2, std::min(8, static_cast<int>(hwConcurrency * 0.6)));
+
+    std::cout << "Detected " << hwConcurrency << " CPU cores, using "
+              << optimalThreads << " decoder threads" << std::endl;
+
+    return optimalThreads;
+}
+
+void VideoModule::calculateDynamicBufferParams() {
+    // Calculate decode-ahead time based on FPS
+    // Higher FPS = shorter buffer time (more frames per second)
+    // Lower FPS = longer buffer time (fewer frames per second)
+
+    if (fps >= 60.0) {
+        // High FPS (60+): 1.5 seconds ahead
+        decodeAheadTime = 1.5;
+        bufferFullnessThreshold = 0.25;  // 25%
+        bufferLowThreshold = 0.12;       // 12%
+    } else if (fps >= 30.0) {
+        // Normal FPS (30-59): 2.0 seconds ahead
+        decodeAheadTime = 2.0;
+        bufferFullnessThreshold = 0.30;  // 30%
+        bufferLowThreshold = 0.15;       // 15%
+    } else if (fps >= 24.0) {
+        // Cinema FPS (24-29): 2.5 seconds ahead
+        decodeAheadTime = 2.5;
+        bufferFullnessThreshold = 0.35;  // 35%
+        bufferLowThreshold = 0.18;       // 18%
+    } else {
+        // Low FPS (<24): 3.0 seconds ahead
+        decodeAheadTime = 3.0;
+        bufferFullnessThreshold = 0.40;  // 40%
+        bufferLowThreshold = 0.20;       // 20%
+    }
+
+    std::cout << "Dynamic buffer params for " << fps << " FPS:" << std::endl;
+    std::cout << "  - Decode ahead: " << decodeAheadTime << "s" << std::endl;
+    std::cout << "  - Buffer fullness threshold: " << (bufferFullnessThreshold * 100) << "%" << std::endl;
+    std::cout << "  - Buffer low threshold: " << (bufferLowThreshold * 100) << "%" << std::endl;
+}
+
 bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
     if (!ctx || videoStreamIndex < 0 || videoStreamIndex >= static_cast<int>(ctx->nb_streams)) {
         std::cerr << "VideoModule: Invalid parameters" << std::endl;
@@ -91,7 +145,10 @@ bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
     
     videoWidth = codecContext->width;
     videoHeight = codecContext->height;
-    
+
+    // Calculate dynamic buffer parameters based on FPS
+    calculateDynamicBufferParams();
+
     {
         std::lock_guard<std::mutex> lock(frameQueueMutex);
         frameQueue.clear();
@@ -99,69 +156,114 @@ bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
     decodedFrames = 0;
     droppedFrames = 0;
     renderedFrames = 0;
-    
-    std::cout << "Video loaded: " << videoWidth << "x" << videoHeight 
+
+    std::cout << "Video loaded: " << videoWidth << "x" << videoHeight
               << " @ " << fps << "fps" << std::endl;
-    
+
     return true;
 }
 
 bool VideoModule::setupDecoder() {
     AVCodecParameters* codecParams = formatContext->streams[streamIndex]->codecpar;
     const AVCodec* codec = avcodec_find_decoder(codecParams->codec_id);
-    
+
     if (!codec) return false;
-    
+
     codecContext = avcodec_alloc_context3(codec);
     if (!codecContext) return false;
-    
+
     if (avcodec_parameters_to_context(codecContext, codecParams) < 0) {
         avcodec_free_context(&codecContext);
         return false;
     }
-    
+
     if (hwDeviceCtx) {
         codecContext->hw_device_ctx = av_buffer_ref(hwDeviceCtx);
     }
-    
+
+    // Configure multi-threading
+    if (config.threadCount == 0) {
+        // Auto-detect optimal thread count
+        actualThreadCount = detectOptimalThreadCount();
+    } else if (config.threadCount > 0) {
+        // Use user-specified count
+        actualThreadCount = config.threadCount;
+    } else {
+        // Disable multi-threading
+        actualThreadCount = 1;
+    }
+
+    codecContext->thread_count = actualThreadCount;
+    codecContext->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+
+    std::cout << "Configuring decoder with " << actualThreadCount << " threads" << std::endl;
+
     codecContext->error_concealment = FF_EC_GUESS_MVS | FF_EC_DEBLOCK;
-    
+
     if (avcodec_open2(codecContext, codec, nullptr) < 0) {
         avcodec_free_context(&codecContext);
         return false;
     }
-    
+
+    // Report actual thread count used by codec
+    std::cout << "Decoder initialized with " << codecContext->thread_count
+              << " threads (type: ";
+    if (codecContext->active_thread_type & FF_THREAD_FRAME) std::cout << "FRAME ";
+    if (codecContext->active_thread_type & FF_THREAD_SLICE) std::cout << "SLICE";
+    std::cout << ")" << std::endl;
+
     return true;
 }
 
 void VideoModule::startDecoding() {
     if (!isStreamLoaded() || isDecoding) return;
-    
+
     shouldStop = false;
     isDecoding = true;
     isBuffering = true;
-    
+
     decodeThread = std::thread(&VideoModule::decodeThreadFunction, this);
-    
+
     std::cout << "Preloading video buffer..." << std::endl;
-    
+
+    // Use timeout to prevent infinite waiting
+    auto startTime = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(5);
+
+    // Calculate target frames for initial buffer (at least 1 second worth or 30 frames)
+    size_t targetFrames = static_cast<size_t>(fps);
+    if (targetFrames < 30) targetFrames = 30;
+    if (targetFrames > maxQueueSize) targetFrames = maxQueueSize / 2;
+
     while (isBuffering && !shouldStop) {
         size_t queueSize;
         {
             std::lock_guard<std::mutex> lock(frameQueueMutex);
             queueSize = frameQueue.size();
         }
-        
-        double fullness = static_cast<double>(queueSize) / maxQueueSize;
-        
-        if (fullness >= bufferFullnessThreshold) {
+
+        auto elapsed = std::chrono::steady_clock::now() - startTime;
+
+        // Exit conditions:
+        // 1. Reached target frame count
+        // 2. Reached buffer fullness threshold
+        // 3. Timeout reached
+        // 4. Decode thread stopped (EOF or error)
+        if (queueSize >= targetFrames ||
+            static_cast<double>(queueSize) / maxQueueSize >= bufferFullnessThreshold ||
+            elapsed >= timeout ||
+            !isDecoding.load()) {
             isBuffering = false;
-            std::cout << "Buffer ready: " << queueSize << " frames" << std::endl;
+            std::cout << "Buffer ready: " << queueSize << " frames";
+            if (elapsed >= timeout) {
+                std::cout << " (timeout after " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << "ms)";
+            }
+            std::cout << std::endl;
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     }
-    
+
     std::cout << "Video decoding started" << std::endl;
 }
 
@@ -181,21 +283,43 @@ void VideoModule::stopDecoding() {
 void VideoModule::decodeThreadFunction() {
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
-    
+
     while (!shouldStop && isDecoding) {
         if (seekRequested.load()) {
             performSeek(seekTargetTime.load());
             seekRequested = false;
         }
-        
+
         size_t queueSize;
+        double lastFrameTimestamp = 0.0;
         {
             std::lock_guard<std::mutex> lock(frameQueueMutex);
             queueSize = frameQueue.size();
+            if (!frameQueue.empty()) {
+                lastFrameTimestamp = frameQueue.back().timestamp;
+            }
         }
-        
-        // Decode aggressively - keep queue as full as possible
-        if (queueSize < maxQueueSize) {
+
+        // Get current playback time
+        double currentPlaybackTime = currentFrameTimestamp;
+
+        // Calculate minimum frames needed (0.5 seconds worth)
+        size_t minFrames = static_cast<size_t>(fps * 0.5);
+        if (minFrames < 5) minFrames = 5;
+
+        // During initial buffering, ignore time constraints
+        // After buffering, only decode within decode-ahead window
+        bool shouldDecode = false;
+        if (isBuffering.load()) {
+            // During buffering: just fill to threshold
+            shouldDecode = (queueSize < maxQueueSize);
+        } else {
+            // During playback: decode ahead based on current time
+            shouldDecode = (queueSize < maxQueueSize) &&
+                          (lastFrameTimestamp < currentPlaybackTime + decodeAheadTime || queueSize < minFrames);
+        }
+
+        if (shouldDecode) {
             if (av_read_frame(formatContext, packet) >= 0) {
                 if (packet->stream_index == streamIndex) {
                     if (avcodec_send_packet(codecContext, packet) >= 0) {
@@ -210,7 +334,7 @@ void VideoModule::decodeThreadFunction() {
                                         fb.timestamp = decodedFrames.load() / fps;
                                     }
                                     fb.valid = true;
-                                    
+
                                     {
                                         std::lock_guard<std::mutex> lock(frameQueueMutex);
                                         frameQueue.push_back(std::move(fb));
@@ -228,10 +352,15 @@ void VideoModule::decodeThreadFunction() {
                 break;
             }
         } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // Sleep based on frame duration to reduce CPU usage
+            // Higher FPS = shorter sleep, Lower FPS = longer sleep
+            int sleepMs = static_cast<int>(frameDuration * 1000 * 2);
+            if (sleepMs < 10) sleepMs = 10;   // Minimum 10ms
+            if (sleepMs > 50) sleepMs = 50;   // Maximum 50ms
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         }
     }
-    
+
     av_frame_free(&frame);
     av_packet_free(&packet);
 }
@@ -285,14 +414,15 @@ cv::Mat VideoModule::getCurrentFrame(double targetTime) {
         std::cout << std::endl;
     }
     
-    // Drop old frames (more than 100ms behind)
+    // Drop old frames (more than 200ms behind) - less aggressive dropping
+    // Keep at least 2 frames to ensure smooth playback
     int droppedThisCall = 0;
-    while (!frameQueue.empty() && frameQueue.front().timestamp < targetTime - 0.1) {
+    while (frameQueue.size() > 2 && frameQueue.front().timestamp < targetTime - 0.2) {
         frameQueue.pop_front();
         droppedFrames++;
         droppedThisCall++;
     }
-    
+
     if (droppedThisCall > 0 && debugCount < 10) {
         std::cout << "Dropped " << droppedThisCall << " old frames" << std::endl;
     }
@@ -410,20 +540,21 @@ VideoStats VideoModule::getStats() const {
     stats.decodedFrames = decodedFrames.load();
     stats.droppedFrames = droppedFrames.load();
     stats.renderedFrames = renderedFrames.load();
-    
+
     {
         std::lock_guard<std::mutex> lock(frameQueueMutex);
         stats.queueSize = frameQueue.size();
     }
-    
+
     stats.fps = fps;
     stats.currentTimestamp = currentFrameTimestamp;
     stats.hardwareAccelEnabled = (hwDeviceType != AV_HWDEVICE_TYPE_NONE);
-    
+    stats.decoderThreads = actualThreadCount;
+
     if (stats.hardwareAccelEnabled) {
         stats.hwAccelType = av_hwdevice_get_type_name(hwDeviceType);
     }
-    
+
     return stats;
 }
 

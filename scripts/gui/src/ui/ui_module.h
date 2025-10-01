@@ -47,8 +47,7 @@ struct UICallbacks {
   std::function<void()> onTogglePlayPause;
   std::function<void(double)> onSeek;  // For timeline clicks (ratio 0-1)
   std::function<void(double)> onSeekRelative;  // For arrow keys (seconds delta)
-  std::function<void(float)> onVolumeChange;
-  std::function<void(float)> onVolumeChangeRelative;  // For arrow keys (delta)
+  std::function<void(float)> onVolumeChange;  // Sets volume (0.0 to 1.0)
   std::function<void()> onExit;
   std::function<void()> onLoadCSV;
   std::function<void()> onNextRow;
@@ -74,6 +73,7 @@ private:
   // State
   bool windowCreated;
   bool shouldExit;
+  float currentVolume;  // Track current volume (0.0 to 1.0)
 
   // CSV data
   std::vector<CSVRow> csvData;

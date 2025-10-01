@@ -18,7 +18,7 @@
 UIModule::UIModule()
     : windowName("High-Performance Video Player"),
       videoDisplayWidth(800), videoDisplayHeight(600),
-      windowCreated(false), shouldExit(false), currentRowIndex(-1) {
+      windowCreated(false), shouldExit(false), currentVolume(0.7f), currentRowIndex(-1) {
 }
 
 UIModule::~UIModule() { shutdown(); }
@@ -167,12 +167,8 @@ void UIModule::drawControls(const MediaStats &stats, double duration) {
   cv::putText(displayFrame, playText, cv::Point(playBtn.x + 15, belowTimelineY + 20),
               cv::FONT_HERSHEY_SIMPLEX, 0.4, config.textColor, 1);
 
-  // Draw volume slider next to play button
-  float volume =
-      (stats.audioStats.isPlaying || stats.state != MediaState::STOPPED)
-          ? 0.7f
-          : 0.7f; // Default volume
-  drawVolumeSlider(volume, belowTimelineY);
+  // Draw volume slider next to play button with current volume
+  drawVolumeSlider(currentVolume, belowTimelineY);
 
   // Draw right panel with controls
   drawRightPanel(stats.state == MediaState::PLAYING);
@@ -428,6 +424,7 @@ void UIModule::handleMouseClick(int x, int y) {
     if (newVolume > 1.0f)
       newVolume = 1.0f;
 
+    currentVolume = newVolume;
     if (callbacks.onVolumeChange) {
       callbacks.onVolumeChange(newVolume);
     }
@@ -488,30 +485,54 @@ bool UIModule::isPointInRect(int x, int y, const cv::Rect &rect) const {
 }
 
 int UIModule::processKeyboard(int timeoutMs) {
-  int key = cv::waitKey(timeoutMs) & 0xFF;
+  // Only use waitKeyEx with the specified timeout - don't add blocking fallback
+  int key = cv::waitKeyEx(timeoutMs);
 
+  // Debug output for all keys
+  if (key != -1 && key != 255) {
+    std::cout << "Key code received: " << key << " (hex: 0x" << std::hex << key << std::dec << ")" << std::endl;
+  }
+
+  // Handle key codes - check both regular and extended codes
   if (key == 27) { // ESC
     shouldExit = true;
     if (callbacks.onExit) {
       callbacks.onExit();
     }
-  } else if (key == 32) { // Spacebar - Play/Pause
+  } else if (key == 32 || key == 0x20) { // Spacebar - Play/Pause
+    std::cout << "Spacebar pressed - toggling play/pause" << std::endl;
     if (callbacks.onTogglePlayPause) {
       callbacks.onTogglePlayPause();
     }
-  } else if (key == 82) { // Up arrow - Volume up
-    if (callbacks.onVolumeChangeRelative) {
-      callbacks.onVolumeChangeRelative(0.05f);
+  }
+  // Volume controls: Up arrow OR 'W' key
+  else if (key == 82 || key == 0x520000 || key == 0x250000 || key == 2490368 || key == 65362 || key == 119 || key == 87) { // Up arrow or W/w
+    currentVolume += 0.05f;
+    if (currentVolume > 1.0f) currentVolume = 1.0f;
+    std::cout << "Volume up (W or Up arrow) - new volume: " << (currentVolume * 100) << "%" << std::endl;
+    if (callbacks.onVolumeChange) {
+      callbacks.onVolumeChange(currentVolume);
     }
-  } else if (key == 84) { // Down arrow - Volume down
-    if (callbacks.onVolumeChangeRelative) {
-      callbacks.onVolumeChangeRelative(-0.05f);
+  }
+  // Volume controls: Down arrow OR 'S' key
+  else if (key == 84 || key == 0x540000 || key == 0x280000 || key == 2621440 || key == 65364 || key == 115 || key == 83) { // Down arrow or S/s
+    currentVolume -= 0.05f;
+    if (currentVolume < 0.0f) currentVolume = 0.0f;
+    std::cout << "Volume down (S or Down arrow) - new volume: " << (currentVolume * 100) << "%" << std::endl;
+    if (callbacks.onVolumeChange) {
+      callbacks.onVolumeChange(currentVolume);
     }
-  } else if (key == 83) { // Right arrow - Seek forward 5 seconds
+  }
+  // Seek controls: Right arrow OR 'D' key
+  else if (key == 83 || key == 0x530000 || key == 0x270000 || key == 2555904 || key == 65363 || key == 100 || key == 68) { // Right arrow or D/d
+    std::cout << "Seek forward 5s (D or Right arrow)" << std::endl;
     if (callbacks.onSeekRelative) {
       callbacks.onSeekRelative(5.0);
     }
-  } else if (key == 81) { // Left arrow - Seek backward 5 seconds
+  }
+  // Seek controls: Left arrow OR 'A' key
+  else if (key == 81 || key == 0x510000 || key == 0x250000 || key == 2424832 || key == 65361 || key == 97 || key == 65) { // Left arrow or A/a
+    std::cout << "Seek backward 5s (A or Left arrow)" << std::endl;
     if (callbacks.onSeekRelative) {
       callbacks.onSeekRelative(-5.0);
     }

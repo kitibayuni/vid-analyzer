@@ -1,7 +1,10 @@
-Pausing playback...
-Audio paused
-Video decoding stopped
-Playback paused at 1.57896s
-terminate called after throwing an instance of 'std::invalid_argument'
-  what():  stod
-Aborted (core dumped)
+=== Playback Statistics ===
+Time: 0:35
+State: Playing
+Audio Buffer: 80%
+Audio Underruns: 0
+Video Queue: 66 frames
+Frames - Decoded: 1111, Dropped: 1045, Rendered: 2748
+Decoder Threads: 8
+A/V Sync Offset: 2.40741ms
+DEBUG: Audio time: 35.1236, Video queue: 66, Decoded: 1111

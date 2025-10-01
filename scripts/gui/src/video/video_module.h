@@ -20,9 +20,10 @@ struct VideoConfig {
     int maxHeight = 800;
     size_t frameQueueSize = 120;
     bool enableHardwareAccel = true;
-    
+    int threadCount = 0;  // 0 = auto-detect, -1 = disable multi-threading
+
     VideoConfig() = default;
-    VideoConfig(int w, int h, size_t qSize, bool hwAccel) 
+    VideoConfig(int w, int h, size_t qSize, bool hwAccel)
         : maxWidth(w), maxHeight(h), frameQueueSize(qSize), enableHardwareAccel(hwAccel) {}
 };
 
@@ -35,6 +36,7 @@ struct VideoStats {
     double currentTimestamp = 0.0;
     bool hardwareAccelEnabled = false;
     std::string hwAccelType = "none";
+    int decoderThreads = 1;
 };
 
 struct FrameBuffer {
@@ -81,13 +83,15 @@ private:
     std::atomic<int> decodedFrames{0};
     std::atomic<int> droppedFrames{0};
     std::atomic<int> renderedFrames{0};
-    
+
     VideoConfig config;
+    int actualThreadCount;
     
     // Adaptive buffering
     std::atomic<bool> isBuffering{false};
-    double bufferFullnessThreshold = 0.5;  // 50%
-    double bufferLowThreshold = 0.1;       // 10%
+    double bufferFullnessThreshold;  // Dynamic based on FPS
+    double bufferLowThreshold;       // Dynamic based on FPS
+    double decodeAheadTime;          // Dynamic based on FPS
     
     // Internal methods
     bool initializeHardwareAccel();
@@ -95,6 +99,8 @@ private:
     void decodeThreadFunction();
     void performSeek(double targetTime);
     bool convertAVFrameToMat(AVFrame* frame, cv::Mat& output);
+    int detectOptimalThreadCount();
+    void calculateDynamicBufferParams();
 
 public:
     VideoModule();
