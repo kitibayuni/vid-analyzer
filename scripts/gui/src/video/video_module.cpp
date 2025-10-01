@@ -35,6 +35,11 @@ bool VideoModule::initialize(const VideoConfig& cfg) {
     std::cout << "Initializing VideoModule..." << std::endl;
     config = cfg;
     maxQueueSize = config.frameQueueSize;
+
+    if (config.enableHardwareAccel) {
+        initializeHardwareAccel();
+    }
+    
     std::cout << "VideoModule initialized successfully" << std::endl;
     return true;
 }

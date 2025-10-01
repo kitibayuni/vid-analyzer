@@ -1,0 +1,7 @@
+Pausing playback...
+Audio paused
+Video decoding stopped
+Playback paused at 1.57896s
+terminate called after throwing an instance of 'std::invalid_argument'
+  what():  stod
+Aborted (core dumped)

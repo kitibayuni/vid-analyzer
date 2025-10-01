@@ -50,9 +50,131 @@ private:
     }
   }
 
+  void handleSeekRelative(double seconds) {
+    double currentTime = mediaController.getCurrentTime();
+    double duration = mediaController.getDuration();
+    double newTime = currentTime + seconds;
+
+    // Clamp to valid range
+    if (newTime < 0) newTime = 0;
+    if (newTime > duration) newTime = duration;
+
+    mediaController.seek(newTime);
+  }
+
   void handleVolumeChange(float volume) { mediaController.setVolume(volume); }
 
+  void handleVolumeChangeRelative(float delta) {
+    float currentVolume = 0.7f; // TODO: Get actual current volume from controller
+    float newVolume = currentVolume + delta;
+
+    // Clamp to 0-1 range
+    if (newVolume < 0.0f) newVolume = 0.0f;
+    if (newVolume > 1.0f) newVolume = 1.0f;
+
+    mediaController.setVolume(newVolume);
+  }
+
   void handleExit() { running = false; }
+
+  void handleLoadCSV() {
+    std::thread([this]() {
+      // UIModule has the file dialog built-in, we just need to call it
+      // But we don't have access to openCSVFileDialog from here
+      // So let's add a simpler approach - get filename from UI
+      std::string filename;
+#ifdef _WIN32
+      std::cout << "Please enter CSV file path: ";
+      std::getline(std::cin, filename);
+#elif defined(__linux__)
+      std::string command = "zenity --file-selection --title=\"Select CSV File\" "
+                          "--file-filter=\"CSV files | *.csv\" 2>/dev/null";
+      FILE *pipe = popen(command.c_str(), "r");
+      if (pipe) {
+        char buffer[1024];
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+          filename = std::string(buffer);
+          if (!filename.empty() && filename.back() == '\n') {
+            filename.pop_back();
+          }
+        }
+        pclose(pipe);
+      } else {
+        std::cout << "Please enter CSV file path: ";
+        std::getline(std::cin, filename);
+      }
+#else
+      std::cout << "Please enter CSV file path: ";
+      std::getline(std::cin, filename);
+#endif
+
+      if (!filename.empty()) {
+        // Parse the CSV file using UIModule's parser
+        // This is a bit awkward since we're in a lambda, but it works
+        if (!uiModule.parseCSVFile(filename)) {
+          uiModule.showError("Failed to load CSV file");
+        } else {
+          std::cout << "CSV loaded successfully. Use Prev/Next buttons to navigate." << std::endl;
+          // Optionally seek to the first row's start time
+          const CSVRow* row = uiModule.getCurrentRow();
+          if (row) {
+            std::cout << "First row: rank=" << row->rank
+                      << ", type=" << row->type
+                      << ", start=" << row->start_time
+                      << ", end=" << row->end_time << std::endl;
+          }
+        }
+      }
+    }).detach();
+  }
+
+  void handleNextRow() {
+    uiModule.navigateToRow(1);
+    const CSVRow* newRow = uiModule.getCurrentRow();
+
+    if (newRow) {
+      std::cout << "Navigated to row " << (uiModule.getCurrentRowIndex() + 1)
+                << ": start=" << newRow->start_time
+                << ", end=" << newRow->end_time
+                << ", type=" << newRow->type << std::endl;
+
+      // Optionally seek to this row's start time
+      double duration = mediaController.getDuration();
+      if (duration > 0 && newRow->start_time <= duration) {
+        mediaController.seek(newRow->start_time);
+      }
+    }
+  }
+
+  void handlePrevRow() {
+    uiModule.navigateToRow(-1);
+    const CSVRow* row = uiModule.getCurrentRow();
+
+    if (row) {
+      std::cout << "Navigated to row " << (uiModule.getCurrentRowIndex() + 1)
+                << ": start=" << row->start_time
+                << ", end=" << row->end_time
+                << ", type=" << row->type << std::endl;
+
+      // Optionally seek to this row's start time
+      double duration = mediaController.getDuration();
+      if (duration > 0 && row->start_time <= duration) {
+        mediaController.seek(row->start_time);
+      }
+    }
+  }
+
+  void handleMarkRow(const std::string& mark) {
+    // Mark the current row
+    uiModule.markCurrentRow(mark);
+
+    // Auto-advance to next row
+    if (uiModule.getCurrentRowIndex() < uiModule.getTotalRows() - 1) {
+      handleNextRow();
+    } else {
+      std::cout << "Reached end of CSV file." << std::endl;
+    }
+  }
 
   std::string openFileDialog() {
     // This is platform-specific file dialog implementation
@@ -134,10 +256,18 @@ public:
     callbacks.onLoadVideo = [this]() { handleLoadVideo(); };
     callbacks.onTogglePlayPause = [this]() { handleTogglePlayPause(); };
     callbacks.onSeek = [this](double ratio) { handleSeek(ratio); };
+    callbacks.onSeekRelative = [this](double seconds) { handleSeekRelative(seconds); };
     callbacks.onVolumeChange = [this](float volume) {
       handleVolumeChange(volume);
     };
+    callbacks.onVolumeChangeRelative = [this](float delta) {
+      handleVolumeChangeRelative(delta);
+    };
     callbacks.onExit = [this]() { handleExit(); };
+    callbacks.onLoadCSV = [this]() { handleLoadCSV(); };
+    callbacks.onNextRow = [this]() { handleNextRow(); };
+    callbacks.onPrevRow = [this]() { handlePrevRow(); };
+    callbacks.onMarkRow = [this](const std::string& mark) { handleMarkRow(mark); };
 
     uiModule.setCallbacks(callbacks);
 
