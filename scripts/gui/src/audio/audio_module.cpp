@@ -1,5 +1,6 @@
 #include "audio_module.h"
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -25,9 +26,17 @@ public:
     if (available < bytes)
       return false;
 
-    for (size_t i = 0; i < bytes; i++) {
-      buffer[write_idx] = data[i];
-      write_idx = (write_idx + 1) % capacity;
+    // Optimized: use memcpy for contiguous chunks
+    size_t bytes_to_end = capacity - write_idx;
+    if (bytes <= bytes_to_end) {
+      // Single contiguous write
+      std::memcpy(&buffer[write_idx], data, bytes);
+      write_idx = (write_idx + bytes) % capacity;
+    } else {
+      // Split write: end of buffer + beginning
+      std::memcpy(&buffer[write_idx], data, bytes_to_end);
+      std::memcpy(&buffer[0], data + bytes_to_end, bytes - bytes_to_end);
+      write_idx = bytes - bytes_to_end;
     }
 
     write_pos.store(write_idx, std::memory_order_release);
@@ -44,9 +53,17 @@ public:
 
     size_t to_read = std::min(available, max_bytes);
 
-    for (size_t i = 0; i < to_read; i++) {
-      data[i] = buffer[read_idx];
-      read_idx = (read_idx + 1) % capacity;
+    // Optimized: use memcpy for contiguous chunks
+    size_t bytes_to_end = capacity - read_idx;
+    if (to_read <= bytes_to_end) {
+      // Single contiguous read
+      std::memcpy(data, &buffer[read_idx], to_read);
+      read_idx = (read_idx + to_read) % capacity;
+    } else {
+      // Split read: end of buffer + beginning
+      std::memcpy(data, &buffer[read_idx], bytes_to_end);
+      std::memcpy(data + bytes_to_end, &buffer[0], to_read - bytes_to_end);
+      read_idx = to_read - bytes_to_end;
     }
 
     read_pos.store(read_idx, std::memory_order_release);
@@ -149,13 +166,15 @@ bool AudioModule::initializeSDL(int sampleRate, int channels, SDL_AudioFormat fo
   }
 
   // Create circular buffer based on sample rate and channels
-  size_t bufferDuration = 20;  // 20 seconds
+  size_t bufferDuration = 10;  // 10 seconds (reduced from 20 for efficiency)
   size_t bufferSizeBytes = sampleRate * channels * bytesPerSample * bufferDuration;
   audioBuffer.reset(new CircularAudioBuffer(bufferSizeBytes));
 
   std::cout << "SDL Audio initialized: " << audioSpec.freq << "Hz, "
             << static_cast<int>(audioSpec.channels) << " channels, "
             << (bytesPerSample == 4 ? "F32" : "F16") << " format" << std::endl;
+  std::cout << "Ring buffer: " << bufferDuration << "s ("
+            << (bufferSizeBytes / 1024.0 / 1024.0) << " MB)" << std::endl;
 
   return true;
 }
@@ -303,6 +322,11 @@ void AudioModule::audioCallback(void *userdata, Uint8 *stream, int len) {
 
   if (bytes_read < static_cast<size_t>(len)) {
     module->underrunCount++;
+    // Log warning every 100 underruns to avoid spam
+    if (module->underrunCount % 100 == 1) {
+      std::cerr << "Audio underrun #" << module->underrunCount.load()
+                << " (buffer: " << (module->audioBuffer->fullness_ratio() * 100) << "%)" << std::endl;
+    }
   }
 
   // Update master clock based on bytes read
@@ -336,7 +360,8 @@ void AudioModule::decodeThreadFunction() {
     AVFrame* frame = av_frame_alloc();
     
     while (!shouldStop) {
-        if (isPlaying && audioBuffer->fullness_ratio() < 0.8) {
+        // Decode continuously until buffer is 95% full (reduced bursty behavior)
+        if (isPlaying && audioBuffer->fullness_ratio() < 0.95) {
             if (av_read_frame(formatContext, packet) >= 0) {
                 if (packet->stream_index == streamIndex) {
                     if (avcodec_send_packet(codecContext, packet) >= 0) {
@@ -353,6 +378,11 @@ void AudioModule::decodeThreadFunction() {
 
                                         if (!audioBuffer->write(samples, total_bytes)) {
                                             overrunCount++;
+                                            // Log warning every 100 overruns to avoid spam
+                                            if (overrunCount % 100 == 1) {
+                                                std::cerr << "Audio overrun #" << overrunCount.load()
+                                                          << " (buffer: " << (audioBuffer->fullness_ratio() * 100) << "%)" << std::endl;
+                                            }
                                         }
                                     }
                                 }
@@ -487,6 +517,13 @@ AudioStats AudioModule::getStats() const {
 
 void AudioModule::shutdown() {
   std::cout << "Shutting down AudioModule..." << std::endl;
+
+  // Display final buffer statistics
+  if (audioBuffer) {
+    std::cout << "Audio buffer stats - Underruns: " << underrunCount.load()
+              << ", Overruns: " << overrunCount.load()
+              << ", Final fullness: " << (audioBuffer->fullness_ratio() * 100) << "%" << std::endl;
+  }
 
   shouldStop = true;
 
