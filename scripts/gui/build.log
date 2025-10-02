@@ -64,12 +64,12 @@ src/audio/audio_module.cpp:264:63: warning: ‘AVCodecContext::channels’ is de
 Compiling video module...
 g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/video/video_module.cpp -o build/objects/video/video_module.o
 src/video/video_module.cpp: In member function ‘bool VideoModule::setupDecoder()’:
-src/video/video_module.cpp:193:21: warning: unused variable ‘codecName’ [-Wunused-variable]
-  193 |         const char* codecName = avcodec_get_name(codecParams->codec_id);
+src/video/video_module.cpp:199:21: warning: unused variable ‘codecName’ [-Wunused-variable]
+  199 |         const char* codecName = avcodec_get_name(codecParams->codec_id);
       |                     ^~~~~~~~~
 src/video/video_module.cpp: In lambda function:
-src/video/video_module.cpp:237:59: warning: unused parameter ‘ctx’ [-Wunused-parameter]
-  237 |             codecContext->get_format = [](AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) -> enum AVPixelFormat {
+src/video/video_module.cpp:243:59: warning: unused parameter ‘ctx’ [-Wunused-parameter]
+  243 |             codecContext->get_format = [](AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) -> enum AVPixelFormat {
       |                                           ~~~~~~~~~~~~~~~~^~~
 Compiling media controller...
 g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/media/media_controller.cpp -o build/objects/media/media_controller.o

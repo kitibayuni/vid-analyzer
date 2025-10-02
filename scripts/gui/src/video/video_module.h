@@ -126,6 +126,8 @@ struct VideoStats {
     bool hardwareAccelEnabled = false;
     std::string hwAccelType = "none";
     int decoderThreads = 1;
+    bool verified = false;
+    std::string verificationError = "";
 };
 
 struct FrameBuffer {
@@ -236,9 +238,12 @@ private:
     std::atomic<bool> isDecoding{false};
     std::atomic<bool> seekRequested{false};
     std::atomic<double> seekTargetTime{0.0};
+    std::atomic<bool> isVerified{false};
+    std::atomic<bool> isVerifying{false};
 
     std::thread demuxThread;
     std::thread decodeThread;
+    std::thread verificationThread;
 
     std::atomic<int> decodedFrames{0};
     std::atomic<int> droppedFrames{0};
@@ -256,6 +261,11 @@ private:
     std::mutex bufferingMutex;
     std::condition_variable bufferingCV;
 
+    // Verification
+    std::mutex verificationMutex;
+    std::condition_variable verificationCV;
+    std::string verificationErrorMsg;
+
     // AVFrame pool for HW transfers (reuse instead of malloc/free)
     std::deque<AVFrame*> hwFramePool;
     std::mutex hwFramePoolMutex;
@@ -266,10 +276,12 @@ private:
     bool setupDecoder();
     void demuxThreadFunction();
     void decodeThreadFunction();
+    void verificationThreadFunction();
     void performSeek(double targetTime);
     bool convertAVFrameToMat(AVFrame* frame, cv::Mat& output);
     int detectOptimalThreadCount();
     void calculateDynamicBufferParams();
+    bool verifyStreamIntegrity();
 
     // AVFrame pool management
     AVFrame* getHWFrame();
@@ -302,6 +314,8 @@ public:
     bool isReadyToPlay() const;
     bool needsBuffering() const;
     void waitForBuffer();
+    bool isVerificationComplete() const;
+    void waitForVerification();
     
     VideoModule(const VideoModule&) = delete;
     VideoModule& operator=(const VideoModule&) = delete;

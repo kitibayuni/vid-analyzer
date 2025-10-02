@@ -179,6 +179,12 @@ bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
     std::cout << "Video loaded: " << videoWidth << "x" << videoHeight
               << " @ " << fps << "fps" << std::endl;
 
+    // Start verification thread
+    isVerified = false;
+    isVerifying = true;
+    verificationErrorMsg.clear();
+    verificationThread = std::thread(&VideoModule::verificationThreadFunction, this);
+
     return true;
 }
 
@@ -283,6 +289,18 @@ bool VideoModule::setupDecoder() {
 void VideoModule::startDecoding() {
     if (!isStreamLoaded() || isDemuxing || isDecoding) return;
 
+    // Wait for verification to complete before starting playback
+    std::cout << "Waiting for video integrity verification..." << std::endl;
+    waitForVerification();
+
+    if (!isVerified.load()) {
+        std::cerr << "Cannot start decoding: Video verification failed - "
+                  << verificationErrorMsg << std::endl;
+        return;
+    }
+
+    std::cout << "Video verification passed, starting decoding..." << std::endl;
+
     shouldStop = false;
     isDemuxing = true;
     isDecoding = true;
@@ -364,6 +382,17 @@ void VideoModule::stopDecoding() {
     frameQueue->clear();
 
     std::cout << "Video pipeline stopped" << std::endl;
+}
+
+bool VideoModule::isVerificationComplete() const {
+    return !isVerifying.load();
+}
+
+void VideoModule::waitForVerification() {
+    std::unique_lock<std::mutex> lock(verificationMutex);
+    verificationCV.wait(lock, [this] {
+        return !isVerifying.load();
+    });
 }
 
 void VideoModule::demuxThreadFunction() {
@@ -498,6 +527,165 @@ void VideoModule::decodeThreadFunction() {
     const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
     std::cout << "[DECODE] Finished - " << framesDecoded << " frames in "
               << elapsedMs << "ms (" << (framesDecoded * 1000.0 / std::max(elapsedMs, 1L)) << " fps)" << std::endl;
+}
+
+void VideoModule::verificationThreadFunction() {
+    std::cout << "[VERIFY] Starting video integrity verification..." << std::endl;
+    const auto startTime = std::chrono::steady_clock::now();
+
+    bool success = verifyStreamIntegrity();
+
+    const auto elapsed = std::chrono::steady_clock::now() - startTime;
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+
+    if (success) {
+        std::cout << "[VERIFY] ✓ Video integrity verified in " << elapsedMs << "ms" << std::endl;
+        isVerified = true;
+    } else {
+        std::cerr << "[VERIFY] ✗ Verification failed: " << verificationErrorMsg
+                  << " (" << elapsedMs << "ms)" << std::endl;
+        isVerified = false;
+    }
+
+    isVerifying = false;
+    verificationCV.notify_all();
+}
+
+bool VideoModule::verifyStreamIntegrity() {
+    // 1. Verify codec context is valid
+    if (!codecContext || !formatContext) {
+        verificationErrorMsg = "Invalid codec or format context";
+        return false;
+    }
+
+    // 2. Verify stream parameters
+    AVStream* stream = formatContext->streams[streamIndex];
+    if (!stream) {
+        verificationErrorMsg = "Invalid stream";
+        return false;
+    }
+
+    // 3. Verify codec parameters
+    if (codecContext->width <= 0 || codecContext->height <= 0) {
+        verificationErrorMsg = "Invalid video dimensions";
+        return false;
+    }
+
+    if (codecContext->width > 16384 || codecContext->height > 16384) {
+        verificationErrorMsg = "Video dimensions exceed maximum (16384x16384)";
+        return false;
+    }
+
+    // 4. Verify FPS is reasonable
+    if (fps <= 0 || fps > 240) {
+        verificationErrorMsg = "Invalid or unsupported frame rate: " + std::to_string(fps);
+        return false;
+    }
+
+    // 5. Verify duration is positive
+    if (totalDuration <= 0) {
+        verificationErrorMsg = "Invalid video duration";
+        return false;
+    }
+
+    // 6. Test decode a few frames to ensure codec works properly
+    std::cout << "[VERIFY] Testing frame decoding..." << std::endl;
+
+    // Save current position
+    int64_t currentPos = avio_tell(formatContext->pb);
+
+    // Seek to beginning
+    av_seek_frame(formatContext, streamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(codecContext);
+
+    int framesDecoded = 0;
+    int packetsRead = 0;
+    const int targetTestFrames = std::min(10, static_cast<int>(fps)); // Test 10 frames or 1 second
+    const int maxPacketsToRead = 100; // Safety limit
+    double lastTimestamp = -1.0;
+    bool timestampIncreasing = true;
+
+    PacketHolder testPacket;
+    while (packetsRead < maxPacketsToRead && framesDecoded < targetTestFrames) {
+        int readResult = av_read_frame(formatContext, testPacket.packet);
+
+        if (readResult < 0) {
+            if (readResult == AVERROR_EOF) {
+                // Flush decoder
+                avcodec_send_packet(codecContext, nullptr);
+            } else {
+                verificationErrorMsg = "Error reading packets during verification";
+                return false;
+            }
+        }
+
+        if (testPacket.packet->stream_index == streamIndex) {
+            packetsRead++;
+
+            if (avcodec_send_packet(codecContext, testPacket.packet) >= 0) {
+                FrameHolder testFrame;
+                while (avcodec_receive_frame(codecContext, testFrame.frame) == 0) {
+                    // Verify frame has valid data
+                    if (!testFrame.frame->data[0]) {
+                        verificationErrorMsg = "Decoded frame has no data";
+                        return false;
+                    }
+
+                    // Verify frame dimensions match
+                    if (testFrame.frame->width != codecContext->width ||
+                        testFrame.frame->height != codecContext->height) {
+                        verificationErrorMsg = "Frame dimensions mismatch";
+                        return false;
+                    }
+
+                    // Verify timestamp is valid and increasing
+                    if (testFrame.frame->pts != AV_NOPTS_VALUE) {
+                        double timestamp = testFrame.frame->pts * av_q2d(stream->time_base);
+                        if (lastTimestamp >= 0 && timestamp < lastTimestamp) {
+                            timestampIncreasing = false;
+                        }
+                        lastTimestamp = timestamp;
+                    }
+
+                    // Test conversion to Mat
+                    cv::Mat testMat;
+                    if (!convertAVFrameToMat(testFrame.frame, testMat)) {
+                        verificationErrorMsg = "Failed to convert frame to Mat";
+                        return false;
+                    }
+
+                    if (testMat.empty() || testMat.cols != codecContext->width ||
+                        testMat.rows != codecContext->height) {
+                        verificationErrorMsg = "Converted frame has invalid dimensions";
+                        return false;
+                    }
+
+                    framesDecoded++;
+                    if (framesDecoded >= targetTestFrames) break;
+                }
+            }
+        }
+
+        av_packet_unref(testPacket.packet);
+    }
+
+    if (framesDecoded == 0) {
+        verificationErrorMsg = "Could not decode any test frames";
+        return false;
+    }
+
+    if (!timestampIncreasing) {
+        std::cout << "[VERIFY] Warning: Non-monotonic timestamps detected" << std::endl;
+    }
+
+    std::cout << "[VERIFY] Successfully decoded " << framesDecoded << " test frames" << std::endl;
+
+    // Restore stream position and flush buffers
+    avio_seek(formatContext->pb, currentPos, SEEK_SET);
+    av_seek_frame(formatContext, streamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(codecContext);
+
+    return true;
 }
 
 bool VideoModule::convertAVFrameToMat(AVFrame* frame, cv::Mat& output) {
@@ -672,6 +860,8 @@ VideoStats VideoModule::getStats() const {
     stats.currentTimestamp = currentFrameTimestamp;
     stats.hardwareAccelEnabled = (hwDeviceType != AV_HWDEVICE_TYPE_NONE);
     stats.decoderThreads = actualThreadCount;
+    stats.verified = isVerified.load();
+    stats.verificationError = verificationErrorMsg;
 
     if (stats.hardwareAccelEnabled) {
         stats.hwAccelType = av_hwdevice_get_type_name(hwDeviceType);
@@ -700,6 +890,14 @@ void VideoModule::waitForBuffer() {
 void VideoModule::shutdown() {
     stopDecoding();
 
+    // Stop verification thread if still running
+    isVerifying = false;
+    verificationCV.notify_all();
+    if (verificationThread.joinable()) {
+        verificationThread.join();
+        std::cout << "  - Verification thread stopped" << std::endl;
+    }
+
     // Queues cleared automatically by stopDecoding()
 
     if (codecContext) {
@@ -725,4 +923,5 @@ void VideoModule::shutdown() {
     streamIndex = -1;
     hwDeviceType = AV_HWDEVICE_TYPE_NONE;
     useHardwareDecoding = false;
+    isVerified = false;
 }
