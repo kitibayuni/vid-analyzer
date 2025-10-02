@@ -3,7 +3,8 @@
     "allow": [
       "Bash(make:*)",
       "Bash(tee:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Read(//mnt/c/Users/Administrator/Code/vid-analyzer/**)"
     ],
     "deny": [],
     "ask": []

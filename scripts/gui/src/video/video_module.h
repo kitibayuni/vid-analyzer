@@ -211,10 +211,14 @@ private:
     AVFormatContext* formatContext;
     AVCodecContext* codecContext;
     int streamIndex;
-    
+
     enum AVHWDeviceType hwDeviceType;
     AVBufferRef* hwDeviceCtx;
     enum AVPixelFormat hwPixelFormat;
+
+    // SwsContext will be recreated per frame to prevent corruption
+    // struct SwsContext* swsContext;  // REMOVED: Caching causes corruption when format changes
+    // std::mutex swsContextMutex;     // REMOVED: No longer needed
 
     int videoWidth, videoHeight;
     double fps;
@@ -266,14 +270,15 @@ private:
     std::condition_variable verificationCV;
     std::string verificationErrorMsg;
 
-    // AVFrame pool for HW transfers (reuse instead of malloc/free)
-    std::deque<AVFrame*> hwFramePool;
-    std::mutex hwFramePoolMutex;
-    static constexpr size_t MAX_HW_FRAME_POOL_SIZE = 8;
+    // REMOVED: HW Frame pool - causes corruption from premature frame reuse
+    // std::deque<AVFrame*> hwFramePool;
+    // std::mutex hwFramePoolMutex;
+    // static constexpr size_t MAX_HW_FRAME_POOL_SIZE = 8;
 
     // Internal methods
     bool initializeHardwareAccel();
     bool setupDecoder();
+    bool reopenDecoder();
     void demuxThreadFunction();
     void decodeThreadFunction();
     void verificationThreadFunction();
@@ -283,9 +288,9 @@ private:
     void calculateDynamicBufferParams();
     bool verifyStreamIntegrity();
 
-    // AVFrame pool management
-    AVFrame* getHWFrame();
-    void returnHWFrame(AVFrame* frame);
+    // REMOVED: HW Frame pool causes corruption due to premature reuse
+    // AVFrame* getHWFrame();
+    // void returnHWFrame(AVFrame* frame);
 
 public:
     VideoModule();

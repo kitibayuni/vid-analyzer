@@ -10,6 +10,26 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+// Helper function for FFmpeg error messages (from reference implementation)
+// av_err2str returns a temporary array which doesn't work in gcc
+static const char* av_make_error(int errnum) {
+    static char str[AV_ERROR_MAX_STRING_SIZE];
+    memset(str, 0, sizeof(str));
+    return av_make_error_string(str, AV_ERROR_MAX_STRING_SIZE, errnum);
+}
+
+// Fix swscaler deprecated pixel format warning (from reference implementation)
+// YUVJ has been deprecated, change pixel format to regular YUV
+static AVPixelFormat correct_for_deprecated_pixel_format(AVPixelFormat pix_fmt) {
+    switch (pix_fmt) {
+        case AV_PIX_FMT_YUVJ420P: return AV_PIX_FMT_YUV420P;
+        case AV_PIX_FMT_YUVJ422P: return AV_PIX_FMT_YUV422P;
+        case AV_PIX_FMT_YUVJ444P: return AV_PIX_FMT_YUV444P;
+        case AV_PIX_FMT_YUVJ440P: return AV_PIX_FMT_YUV440P;
+        default:                  return pix_fmt;
+    }
+}
+
 // FrameBuffer implementation moved to header
 
 VideoModule::VideoModule()
@@ -114,28 +134,8 @@ void VideoModule::calculateDynamicBufferParams() {
     std::cout << "  - Buffer low threshold: " << (bufferLowThreshold * 100) << "%" << std::endl;
 }
 
-AVFrame* VideoModule::getHWFrame() {
-    std::lock_guard<std::mutex> lock(hwFramePoolMutex);
-    if (!hwFramePool.empty()) {
-        AVFrame* frame = hwFramePool.back();
-        hwFramePool.pop_back();
-        av_frame_unref(frame);  // Clear previous data
-        return frame;
-    }
-    return av_frame_alloc();  // Create new if pool empty
-}
-
-void VideoModule::returnHWFrame(AVFrame* frame) {
-    if (!frame) return;
-
-    std::lock_guard<std::mutex> lock(hwFramePoolMutex);
-    if (hwFramePool.size() < MAX_HW_FRAME_POOL_SIZE) {
-        av_frame_unref(frame);  // Clear data but keep allocation
-        hwFramePool.push_back(frame);
-    } else {
-        av_frame_free(&frame);  // Pool full, actually free
-    }
-}
+// REMOVED: HW Frame pool functions - caused corruption from premature reuse
+// Frames are now allocated fresh each time and freed immediately after use
 
 bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
     if (!ctx || videoStreamIndex < 0 || videoStreamIndex >= static_cast<int>(ctx->nb_streams)) {
@@ -188,6 +188,22 @@ bool VideoModule::loadStream(AVFormatContext* ctx, int videoStreamIndex) {
     return true;
 }
 
+bool VideoModule::reopenDecoder() {
+    std::cout << "Reopening decoder for clean state..." << std::endl;
+
+    // Close existing codec context
+    if (codecContext) {
+        avcodec_free_context(&codecContext);
+        codecContext = nullptr;
+    }
+
+    // REMOVED: Hardware frame pool cleanup (no longer used)
+    // REMOVED: SwsContext cleanup (no longer cached)
+
+    // Reopen with clean state
+    return setupDecoder();
+}
+
 bool VideoModule::setupDecoder() {
     AVCodecParameters* codecParams = formatContext->streams[streamIndex]->codecpar;
     const AVCodec* codec = nullptr;
@@ -196,7 +212,6 @@ bool VideoModule::setupDecoder() {
     if (hwDeviceCtx) {
         // Map codec to hardware decoder name
         std::string hwCodecName;
-        const char* codecName = avcodec_get_name(codecParams->codec_id);
 
         if (hwDeviceType == AV_HWDEVICE_TYPE_CUDA) {
             if (codecParams->codec_id == AV_CODEC_ID_H264) hwCodecName = "h264_cuvid";
@@ -240,7 +255,7 @@ bool VideoModule::setupDecoder() {
 
         // For VAAPI/DXVA2, we need to set get_format callback to select HW pixel format
         if (hwDeviceType == AV_HWDEVICE_TYPE_VAAPI) {
-            codecContext->get_format = [](AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) -> enum AVPixelFormat {
+            codecContext->get_format = [](AVCodecContext* /*ctx*/, const enum AVPixelFormat *pix_fmts) -> enum AVPixelFormat {
                 const enum AVPixelFormat *p;
                 for (p = pix_fmts; *p != AV_PIX_FMT_NONE; p++) {
                     if (*p == AV_PIX_FMT_VAAPI)
@@ -300,6 +315,9 @@ void VideoModule::startDecoding() {
     }
 
     std::cout << "Video verification passed, starting decoding..." << std::endl;
+
+    // Ensure stream is at beginning
+    av_seek_frame(formatContext, streamIndex, 0, AVSEEK_FLAG_BACKWARD);
 
     shouldStop = false;
     isDemuxing = true;
@@ -487,7 +505,8 @@ void VideoModule::decodeThreadFunction() {
         }
 
         // Decode packet (happens on GPU if HW accel enabled)
-        if (avcodec_send_packet(codecContext, packetHolder.packet) >= 0) {
+        int sendResult = avcodec_send_packet(codecContext, packetHolder.packet);
+        if (sendResult >= 0) {
             while (!shouldStop) {
                 FrameHolder frameHolder;
                 const int ret = avcodec_receive_frame(codecContext, frameHolder.frame);
@@ -500,11 +519,18 @@ void VideoModule::decodeThreadFunction() {
 
                     lastDecodedTimestamp = timestamp;
 
-                    // CRITICAL FIX: Convert immediately to prevent corruption
-                    // The separate conversion thread causes buffer reuse issues
-                    // Convert now while frame data is still valid
+                    // CRITICAL FIX: Create independent frame reference before conversion
+                    // FFmpeg may reuse internal buffers on next avcodec_receive_frame()
+                    // av_frame_ref() increments refcount to keep data valid
+                    FrameHolder independentFrame;
+                    if (av_frame_ref(independentFrame.frame, frameHolder.frame) < 0) {
+                        std::cerr << "[DECODE] Failed to reference frame" << std::endl;
+                        break;
+                    }
+
+                    // Convert the independent frame (data is now safe from FFmpeg reuse)
                     cv::Mat convertedFrame;
-                    if (convertAVFrameToMat(frameHolder.frame, convertedFrame)) {
+                    if (convertAVFrameToMat(independentFrame.frame, convertedFrame)) {
                         // Use shared_ptr to avoid expensive cloning later
                         auto sharedFrame = std::make_shared<cv::Mat>(std::move(convertedFrame));
                         FrameBuffer fb(sharedFrame, timestamp);
@@ -515,11 +541,16 @@ void VideoModule::decodeThreadFunction() {
                             bufferingCV.notify_all();
                         }
                     }
-                    // frameHolder freed here, buffer returned to decoder pool
+                    // Both frameHolder and independentFrame freed here, decrements refcount
                 } else if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    break;
+                } else if (ret < 0) {
+                    std::cerr << "[DECODE] Failed to receive frame: " << av_make_error(ret) << std::endl;
                     break;
                 }
             }
+        } else if (sendResult < 0 && sendResult != AVERROR(EAGAIN)) {
+            std::cerr << "[DECODE] Failed to send packet: " << av_make_error(sendResult) << std::endl;
         }
     }
 
@@ -591,9 +622,6 @@ bool VideoModule::verifyStreamIntegrity() {
     // 6. Test decode a few frames to ensure codec works properly
     std::cout << "[VERIFY] Testing frame decoding..." << std::endl;
 
-    // Save current position
-    int64_t currentPos = avio_tell(formatContext->pb);
-
     // Seek to beginning
     av_seek_frame(formatContext, streamIndex, 0, AVSEEK_FLAG_BACKWARD);
     avcodec_flush_buffers(codecContext);
@@ -622,9 +650,11 @@ bool VideoModule::verifyStreamIntegrity() {
         if (testPacket.packet->stream_index == streamIndex) {
             packetsRead++;
 
-            if (avcodec_send_packet(codecContext, testPacket.packet) >= 0) {
+            int sendResult = avcodec_send_packet(codecContext, testPacket.packet);
+            if (sendResult >= 0) {
                 FrameHolder testFrame;
-                while (avcodec_receive_frame(codecContext, testFrame.frame) == 0) {
+                int receiveResult;
+                while ((receiveResult = avcodec_receive_frame(codecContext, testFrame.frame)) == 0) {
                     // Verify frame has valid data
                     if (!testFrame.frame->data[0]) {
                         verificationErrorMsg = "Decoded frame has no data";
@@ -663,6 +693,15 @@ bool VideoModule::verifyStreamIntegrity() {
                     framesDecoded++;
                     if (framesDecoded >= targetTestFrames) break;
                 }
+
+                // Check for decode errors (other than EAGAIN/EOF)
+                if (receiveResult < 0 && receiveResult != AVERROR(EAGAIN) && receiveResult != AVERROR_EOF) {
+                    verificationErrorMsg = std::string("Frame decode error: ") + av_make_error(receiveResult);
+                    return false;
+                }
+            } else if (sendResult != AVERROR(EAGAIN)) {
+                verificationErrorMsg = std::string("Packet send error: ") + av_make_error(sendResult);
+                return false;
             }
         }
 
@@ -680,10 +719,17 @@ bool VideoModule::verifyStreamIntegrity() {
 
     std::cout << "[VERIFY] Successfully decoded " << framesDecoded << " test frames" << std::endl;
 
-    // Restore stream position and flush buffers
-    avio_seek(formatContext->pb, currentPos, SEEK_SET);
-    av_seek_frame(formatContext, streamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    // REMOVED: Decoder reopening - this was causing codec state corruption
+    // Instead, just flush the codec and reset stream position
     avcodec_flush_buffers(codecContext);
+
+    // Reset stream to beginning
+    int64_t seekTarget = 0;
+    if (av_seek_frame(formatContext, streamIndex, seekTarget, AVSEEK_FLAG_BACKWARD) < 0) {
+        avio_seek(formatContext->pb, 0, SEEK_SET);
+    }
+
+    std::cout << "[VERIFY] Codec flushed and stream reset to beginning" << std::endl;
 
     return true;
 }
@@ -702,12 +748,12 @@ bool VideoModule::convertAVFrameToMat(AVFrame* frame, cv::Mat& output) {
         frame->format == AV_PIX_FMT_VIDEOTOOLBOX ||
         frame->format == AV_PIX_FMT_QSV) {
 
-        // Transfer from GPU to CPU using pooled frame
-        swFrame = getHWFrame();
+        // Allocate fresh frame for HW transfer (no pool reuse - prevents corruption)
+        swFrame = av_frame_alloc();
         if (!swFrame) return false;
 
         if (av_hwframe_transfer_data(swFrame, frame, 0) < 0) {
-            returnHWFrame(swFrame);
+            av_frame_free(&swFrame);
             return false;
         }
 
@@ -716,31 +762,44 @@ bool VideoModule::convertAVFrameToMat(AVFrame* frame, cv::Mat& output) {
         frame = swFrame;
     }
 
-    // Use swscale for all formats (SIMD-optimized, faster than manual memcpy)
-    // Create cached sws context for better performance
-    struct SwsContext* swsCtx = sws_getContext(
-        frame->width, frame->height, static_cast<AVPixelFormat>(frame->format),
+    // Always create fresh SwsContext per frame (like reference implementation)
+    // This prevents corruption from format/size changes
+    AVPixelFormat source_pix_fmt = correct_for_deprecated_pixel_format(
+        static_cast<AVPixelFormat>(frame->format));
+
+    struct SwsContext* swsContext = sws_getContext(
+        frame->width, frame->height, source_pix_fmt,
         frame->width, frame->height, AV_PIX_FMT_BGR24,
-        SWS_FAST_BILINEAR,  // Faster than SWS_BILINEAR, good quality
+        SWS_BILINEAR,  // Use BILINEAR for better quality like reference
         nullptr, nullptr, nullptr
     );
 
     bool success = false;
-    if (swsCtx) {
+    if (swsContext) {
+        // CRITICAL: Allocate cv::Mat with continuous data buffer ownership
+        // This ensures data is NOT shared and is truly independent
         output = cv::Mat(frame->height, frame->width, CV_8UC3);
+
+        // Verify Mat has exclusive ownership of its data (important for thread safety)
+        if (!output.isContinuous()) {
+            std::cerr << "[CONVERT] Warning: Mat is not continuous!" << std::endl;
+        }
+
         uint8_t* dest[1] = { output.data };
         int destLinesize[1] = { static_cast<int>(output.step[0]) };
 
-        sws_scale(swsCtx, frame->data, frame->linesize, 0, frame->height,
-                 dest, destLinesize);
+        int result = sws_scale(swsContext, frame->data, frame->linesize, 0, frame->height,
+                               dest, destLinesize);
 
-        sws_freeContext(swsCtx);
-        success = !output.empty();
+        success = (result > 0 && !output.empty());
+
+        // Free SwsContext immediately after use
+        sws_freeContext(swsContext);
     }
 
-    // Return pooled frame instead of freeing
+    // Free temporary HW frame if allocated
     if (swFrame) {
-        returnHWFrame(swFrame);
+        av_frame_free(&swFrame);
     }
 
     return success;
@@ -779,9 +838,11 @@ cv::Mat VideoModule::getCurrentFrame(double targetTime) {
     // Single mutex lock for entire update/return operation
     std::lock_guard<std::mutex> frameLock(currentFrameMutex);
 
-    // If buffering, return cached frame (no clone needed with shared_ptr!)
+    // CRITICAL FIX: Always clone, even during buffering!
+    // Returning *currentFrame creates SHALLOW COPY (shares data buffer)
+    // This causes corruption when currentFrame is updated while UI is drawing
     if (currentlyBuffering) {
-        return (currentFrame && !currentFrame->empty()) ? *currentFrame : cv::Mat();
+        return (currentFrame && !currentFrame->empty()) ? currentFrame->clone() : cv::Mat();
     }
 
     // Check if we should advance to the next frame
@@ -910,14 +971,8 @@ void VideoModule::shutdown() {
         hwDeviceCtx = nullptr;
     }
 
-    // Clean up HW frame pool
-    {
-        std::lock_guard<std::mutex> lock(hwFramePoolMutex);
-        for (AVFrame* frame : hwFramePool) {
-            av_frame_free(&frame);
-        }
-        hwFramePool.clear();
-    }
+    // REMOVED: SwsContext cleanup (no longer cached - created/freed per frame)
+    // REMOVED: HW frame pool cleanup (no longer used - frames allocated/freed immediately)
 
     formatContext = nullptr;
     streamIndex = -1;
