@@ -302,9 +302,8 @@ void VideoModule::startDecoding() {
     // Use condition variable to wait for buffer instead of sleep polling
     const auto timeout = std::chrono::seconds(5);
 
-    // Calculate target frames for initial buffer (at least 1 second worth or 30 frames)
+    // Calculate target frames for initial buffer (1 second worth of frames based on detected fps)
     size_t targetFrames = static_cast<size_t>(fps);
-    if (targetFrames < 30) targetFrames = 30;
     const size_t maxFrames = 120;
     if (targetFrames > maxFrames) targetFrames = maxFrames / 2;
 
@@ -477,7 +476,9 @@ void VideoModule::decodeThreadFunction() {
                     // Convert now while frame data is still valid
                     cv::Mat convertedFrame;
                     if (convertAVFrameToMat(frameHolder.frame, convertedFrame)) {
-                        FrameBuffer fb(std::move(convertedFrame), timestamp);
+                        // Use shared_ptr to avoid expensive cloning later
+                        auto sharedFrame = std::make_shared<cv::Mat>(std::move(convertedFrame));
+                        FrameBuffer fb(sharedFrame, timestamp);
                         if (frameQueue->push(std::move(fb), std::chrono::milliseconds(50))) {
                             framesDecoded++;
                             decodedFrames++;
@@ -590,9 +591,9 @@ cv::Mat VideoModule::getCurrentFrame(double targetTime) {
     // Single mutex lock for entire update/return operation
     std::lock_guard<std::mutex> frameLock(currentFrameMutex);
 
-    // If buffering, return cached frame
+    // If buffering, return cached frame (no clone needed with shared_ptr!)
     if (currentlyBuffering) {
-        return currentFrame.empty() ? cv::Mat() : currentFrame.clone();
+        return (currentFrame && !currentFrame->empty()) ? *currentFrame : cv::Mat();
     }
 
     // Check if we should advance to the next frame
@@ -600,30 +601,31 @@ cv::Mat VideoModule::getCurrentFrame(double targetTime) {
     // 1. Current frame is significantly behind target time (more than half a frame duration)
     // 2. Or we don't have a current frame yet
     const double frameTimeTolerance = frameDuration * 0.5;
-    const bool shouldAdvance = (currentFrame.empty() ||
+    const bool shouldAdvance = (!currentFrame || currentFrame->empty() ||
                                (targetTime - currentFrameTimestamp) > frameTimeTolerance);
 
     if (shouldAdvance) {
         FrameBuffer nextFrame;
         // Use non-blocking pop to check if next frame is available
         if (frameQueue->pop(nextFrame, std::chrono::milliseconds(0))) {
-            if (nextFrame.valid) {
-                currentFrame = std::move(nextFrame.frame);
+            if (nextFrame.valid && nextFrame.frame) {
+                currentFrame = nextFrame.frame;  // Share ownership - no copy!
                 currentFrameTimestamp = nextFrame.timestamp;
                 renderedFrames++;
             }
         }
     }
 
-    // Return clone of current cached frame
-    return currentFrame.empty() ? cv::Mat() : currentFrame.clone();
+    // Return clone to ensure data independence (UI will draw on it)
+    // Still better than before: we only clone once here instead of multiple times
+    return (currentFrame && !currentFrame->empty()) ? currentFrame->clone() : cv::Mat();
 }
 
 
 cv::Mat VideoModule::getCurrentFrameImmediate() {
     std::lock_guard<std::mutex> lock(currentFrameMutex);
-    if (!currentFrame.empty()) {
-        return currentFrame.clone();
+    if (currentFrame && !currentFrame->empty()) {
+        return currentFrame->clone();  // Clone for safety
     }
     return cv::Mat();
 }

@@ -129,14 +129,14 @@ struct VideoStats {
 };
 
 struct FrameBuffer {
-    cv::Mat frame;
+    std::shared_ptr<cv::Mat> frame;  // Shared ownership - no expensive cloning!
     double timestamp;
     bool valid;
 
-    FrameBuffer() : timestamp(0.0), valid(false) {}
-    FrameBuffer(cv::Mat&& f, double ts) : frame(std::move(f)), timestamp(ts), valid(true) {}
+    FrameBuffer() : frame(nullptr), timestamp(0.0), valid(false) {}
+    FrameBuffer(std::shared_ptr<cv::Mat> f, double ts) : frame(f), timestamp(ts), valid(true) {}
 
-    // Move constructors
+    // Move constructors (cheap - just moves shared_ptr)
     FrameBuffer(FrameBuffer&& other) noexcept
         : frame(std::move(other.frame)), timestamp(other.timestamp), valid(other.valid) {
         other.valid = false;
@@ -151,17 +151,9 @@ struct FrameBuffer {
         return *this;
     }
 
-    // Copy constructors (deep copy for non-destructive reads)
-    FrameBuffer(const FrameBuffer& other)
-        : frame(other.frame.clone()), timestamp(other.timestamp), valid(other.valid) {}
-    FrameBuffer& operator=(const FrameBuffer& other) {
-        if (this != &other) {
-            frame = other.frame.clone();
-            timestamp = other.timestamp;
-            valid = other.valid;
-        }
-        return *this;
-    }
+    // Copy constructors (cheap - just copies shared_ptr, not frame data!)
+    FrameBuffer(const FrameBuffer& other) = default;
+    FrameBuffer& operator=(const FrameBuffer& other) = default;
 };
 
 // RAII wrapper for AVPacket
@@ -234,7 +226,7 @@ private:
     size_t minPacketQueueSize;  // Minimum packets before decode starts
 
     std::mutex currentFrameMutex;
-    cv::Mat currentFrame;
+    std::shared_ptr<cv::Mat> currentFrame;  // Shared ownership - no cloning needed!
     double currentFrameTimestamp;
     std::atomic<double> lastRequestedTime{0.0};  // Track playback position for decode throttling
 
