@@ -499,19 +499,19 @@ int UIModule::processKeyboard(int timeoutMs) {
     if (callbacks.onTogglePlayPause) {
       callbacks.onTogglePlayPause();
     }
-  } else if (key == 82) { // Up arrow - Volume up
+  } else if (key == 82 || key == 'w' || key == 'W') { // Up arrow or W - Volume up
     if (callbacks.onVolumeChangeRelative) {
       callbacks.onVolumeChangeRelative(0.05f);
     }
-  } else if (key == 84) { // Down arrow - Volume down
+  } else if (key == 84 || key == 's' || key == 'S') { // Down arrow or S - Volume down
     if (callbacks.onVolumeChangeRelative) {
       callbacks.onVolumeChangeRelative(-0.05f);
     }
-  } else if (key == 83) { // Right arrow - Seek forward 5 seconds
+  } else if (key == 83 || key == 'd' || key == 'D') { // Right arrow or D - Seek forward 5 seconds
     if (callbacks.onSeekRelative) {
       callbacks.onSeekRelative(5.0);
     }
-  } else if (key == 81) { // Left arrow - Seek backward 5 seconds
+  } else if (key == 81 || key == 'a' || key == 'A') { // Left arrow or A - Seek backward 5 seconds
     if (callbacks.onSeekRelative) {
       callbacks.onSeekRelative(-5.0);
     }
