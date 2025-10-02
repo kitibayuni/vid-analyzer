@@ -62,9 +62,17 @@ private:
     mediaController.seek(newTime);
   }
 
-  void handleVolumeChange(float volume) {
-    std::cout << "Setting volume to: " << (volume * 100) << "%" << std::endl;
-    mediaController.setVolume(volume);
+  void handleVolumeChange(float volume) { mediaController.setVolume(volume); }
+
+  void handleVolumeChangeRelative(float delta) {
+    float currentVolume = 0.7f; // TODO: Get actual current volume from controller
+    float newVolume = currentVolume + delta;
+
+    // Clamp to 0-1 range
+    if (newVolume < 0.0f) newVolume = 0.0f;
+    if (newVolume > 1.0f) newVolume = 1.0f;
+
+    mediaController.setVolume(newVolume);
   }
 
   void handleExit() { running = false; }
@@ -252,6 +260,9 @@ public:
     callbacks.onVolumeChange = [this](float volume) {
       handleVolumeChange(volume);
     };
+    callbacks.onVolumeChangeRelative = [this](float delta) {
+      handleVolumeChangeRelative(delta);
+    };
     callbacks.onExit = [this]() { handleExit(); };
     callbacks.onLoadCSV = [this]() { handleLoadCSV(); };
     callbacks.onNextRow = [this]() { handleNextRow(); };
@@ -304,8 +315,8 @@ public:
             lastFrameTime = currentTime;
         }
 
-        // Process keyboard with slightly longer timeout to catch arrow keys
-        int key = uiModule.processKeyboard(10);
+        // Process keyboard with very short timeout
+        int key = uiModule.processKeyboard(1);
         if (key == 27) break; // ESC exits
 
         // Print stats less frequently
@@ -345,8 +356,6 @@ public:
       std::cout << "Frames - Decoded: " << stats.videoStats.decodedFrames
                 << ", Dropped: " << stats.videoStats.droppedFrames
                 << ", Rendered: " << stats.videoStats.renderedFrames
-                << std::endl;
-      std::cout << "Decoder Threads: " << stats.videoStats.decoderThreads
                 << std::endl;
 
       if (stats.videoStats.hardwareAccelEnabled) {

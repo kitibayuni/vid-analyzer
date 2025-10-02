@@ -55,8 +55,8 @@ SDL2_CFLAGS = $(shell $(PKG_CONFIG) --cflags sdl2 2>/dev/null || echo "-I/usr/in
 SDL2_LIBS = $(shell $(PKG_CONFIG) --libs sdl2 2>/dev/null || echo "-lSDL2")
 
 # FFmpeg
-FFMPEG_CFLAGS = $(shell $(PKG_CONFIG) --cflags libavformat libavcodec libswresample libswscale libavutil 2>/dev/null)
-FFMPEG_LIBS = $(shell $(PKG_CONFIG) --libs libavformat libavcodec libswresample libswscale libavutil 2>/dev/null)
+FFMPEG_CFLAGS = $(shell $(PKG_CONFIG) --cflags libavformat libavcodec libswresample libavutil 2>/dev/null)
+FFMPEG_LIBS = $(shell $(PKG_CONFIG) --libs libavformat libavcodec libswresample libavutil 2>/dev/null)
 
 # Platform-specific settings
 ifeq ($(UNAME_S),Linux)
@@ -144,7 +144,6 @@ check-deps:
 	@$(PKG_CONFIG) --exists libavformat || (echo "FFmpeg libavformat not found!" && exit 1)
 	@$(PKG_CONFIG) --exists libavcodec || (echo "FFmpeg libavcodec not found!" && exit 1)
 	@$(PKG_CONFIG) --exists libswresample || (echo "FFmpeg libswresample not found!" && exit 1)
-	@$(PKG_CONFIG) --exists libswscale || (echo "FFmpeg libswscale not found!" && exit 1)
 	@$(PKG_CONFIG) --exists libavutil || (echo "FFmpeg libavutil not found!" && exit 1)
 	@echo "All dependencies found!"
 
@@ -154,7 +153,7 @@ install-deps-ubuntu:
 	sudo apt update
 	sudo apt install -y build-essential pkg-config
 	sudo apt install -y libopencv-dev libsdl2-dev
-	sudo apt install -y libavformat-dev libavcodec-dev libswresample-dev libswscale-dev libavutil-dev
+	sudo apt install -y libavformat-dev libavcodec-dev libswresample-dev libavutil-dev
 	sudo apt install -y zenity clang-format clang-tidy
 
 # Install dependencies (Fedora/CentOS/RHEL)

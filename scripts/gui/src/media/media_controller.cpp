@@ -259,35 +259,30 @@ void MediaController::closeFile() {
 
 bool MediaController::play() {
     std::lock_guard<std::mutex> lock(operationMutex);
-
+    
     if (currentState != MediaState::READY && currentState != MediaState::PAUSED) {
         setError("Cannot play: media not ready");
         return false;
     }
-
+    
     std::cout << "Starting playback..." << std::endl;
-
+    
     // Start video decoding first (this will preload the buffer)
     if (hasVideo()) {
         videoModule->startDecoding();
-
+        
         // Wait for video buffer to be ready
         if (!videoModule->isReadyToPlay()) {
             std::cout << "Waiting for video buffer..." << std::endl;
             videoModule->waitForBuffer();
         }
     }
-
+    
     // Start audio playback (master clock)
     if (hasAudio()) {
         audioModule->play();
-    } else {
-        // Video-only mode: start playback timer
-        std::lock_guard<std::mutex> timeLock(playbackTimeMutex);
-        playbackStartTime = std::chrono::steady_clock::now();
-        // Keep current seekPosition (set by seek() or 0.0 by default)
     }
-
+    
     setState(MediaState::PLAYING);
     std::cout << "Playback started" << std::endl;
     return true;
@@ -295,29 +290,23 @@ bool MediaController::play() {
 
 bool MediaController::pause() {
     std::lock_guard<std::mutex> lock(operationMutex);
-
+    
     if (currentState != MediaState::PLAYING) {
         return false;
     }
-
+    
     std::cout << "Pausing playback..." << std::endl;
-
+    
     // Pause audio first (master clock)
     if (hasAudio()) {
         audioModule->pause();
-    } else {
-        // Video-only mode: save current playback position
-        std::lock_guard<std::mutex> timeLock(playbackTimeMutex);
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration<double>(now - playbackStartTime).count();
-        seekPosition += elapsed;
     }
-
+    
     // Stop video decoding
     if (hasVideo()) {
         videoModule->stopDecoding();
     }
-
+    
     setState(MediaState::PAUSED);
     std::cout << "Playback paused at " << getCurrentTime() << "s" << std::endl;
     return true;
@@ -325,27 +314,23 @@ bool MediaController::pause() {
 
 bool MediaController::stop() {
     std::lock_guard<std::mutex> lock(operationMutex);
-
+    
     if (currentState == MediaState::STOPPED) {
         return true;
     }
-
+    
     std::cout << "Stopping playback..." << std::endl;
-
+    
     // Stop audio
     if (hasAudio()) {
         audioModule->stop();
-    } else {
-        // Video-only mode: reset playback position
-        std::lock_guard<std::mutex> timeLock(playbackTimeMutex);
-        seekPosition = 0.0;
     }
-
+    
     // Stop video
     if (hasVideo()) {
         videoModule->stopDecoding();
     }
-
+    
     setState(MediaState::READY);
     std::cout << "Playback stopped" << std::endl;
     return true;
@@ -395,15 +380,6 @@ bool MediaController::seek(double timeSeconds) {
         return false;
     }
     
-    // Update video-only playback timer
-    if (!hasAudio()) {
-        std::lock_guard<std::mutex> timeLock(playbackTimeMutex);
-        seekPosition = timeSeconds;
-        if (wasPlaying) {
-            playbackStartTime = std::chrono::steady_clock::now();
-        }
-    }
-
     // Resume playback if we were playing
     if (wasPlaying) {
         if (hasVideo()) {
@@ -417,7 +393,7 @@ bool MediaController::seek(double timeSeconds) {
     } else {
         setState(MediaState::PAUSED);
     }
-
+    
     std::cout << "Seek completed to " << timeSeconds << "s" << std::endl;
     return true;
 }
@@ -426,25 +402,15 @@ cv::Mat MediaController::getCurrentVideoFrame() {
     if (!hasVideo() || currentState == MediaState::STOPPED) {
         return cv::Mat();
     }
-
+    
     // Always use audio time for sync
     if (hasAudio()) {
         double audioTime = audioModule->getCurrentTime();
         return videoModule->getCurrentFrame(audioTime);
     } else {
-        // Video-only playback - calculate real-time playback position
-        double targetTime = 0.0;
-        if (currentState == MediaState::PLAYING) {
-            std::lock_guard<std::mutex> timeLock(playbackTimeMutex);
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration<double>(now - playbackStartTime).count();
-            targetTime = seekPosition + elapsed;
-        } else {
-            // Paused - use current seek position
-            std::lock_guard<std::mutex> timeLock(playbackTimeMutex);
-            targetTime = seekPosition;
-        }
-        return videoModule->getCurrentFrame(targetTime);
+        // Video-only playback - use video's own timestamp
+        VideoStats stats = videoModule->getStats();
+        return videoModule->getCurrentFrame(stats.currentTimestamp);
     }
 }
 

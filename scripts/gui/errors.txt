@@ -1,21 +1,7 @@
-Build failed! Check build.log for details.
-src/video/video_module.cpp: In member function ‘VideoStats VideoModule::getStats() const’:
-src/video/video_module.cpp:739:42: error: ‘frameQueueMutex’ was not declared in this scope; did you mean ‘frameQueue’?
-  739 |         std::lock_guard<std::mutex> lock(frameQueueMutex);
-      |                                          ^~~~~~~~~~~~~~~
-      |                                          frameQueue
-src/video/video_module.cpp:740:38: error: ‘const class std::unique_ptr<ThreadSafeQueue<FrameBuffer> >’ has no member named ‘size’
-  740 |         stats.queueSize = frameQueue.size();
-      |                                      ^~~~
-src/video/video_module.cpp: In member function ‘bool VideoModule::isReadyToPlay() const’:
-src/video/video_module.cpp:756:38: error: ‘frameQueueMutex’ was not declared in this scope; did you mean ‘frameQueue’?
-  756 |     std::lock_guard<std::mutex> lock(frameQueueMutex);
-      |                                      ^~~~~~~~~~~~~~~
-      |                                      frameQueue
-src/video/video_module.cpp:757:43: error: ‘const class std::unique_ptr<ThreadSafeQueue<FrameBuffer> >’ has no member named ‘size’
-  757 |     return static_cast<double>(frameQueue.size()) / maxQueueSize >= bufferFullnessThreshold;
-      |                                           ^~~~
-src/video/video_module.cpp:757:53: error: ‘maxQueueSize’ was not declared in this scope
-  757 |     return static_cast<double>(frameQueue.size()) / maxQueueSize >= bufferFullnessThreshold;
-      |                                                     ^~~~~~~~~~~~
-make: *** [Makefile:107: build/objects/video/video_module.o] Error 1
+Pausing playback...
+Audio paused
+Video decoding stopped
+Playback paused at 1.57896s
+terminate called after throwing an instance of 'std::invalid_argument'
+  what():  stod
+Aborted (core dumped)
