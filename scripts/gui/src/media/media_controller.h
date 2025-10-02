@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <chrono>
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -67,6 +68,11 @@ private:
   // Synchronization
   std::atomic<bool> syncEnabled{true};
   std::atomic<double> maxSyncOffset{0.1}; // 100ms tolerance
+
+  // Video-only playback timing (for when audio is not available)
+  std::chrono::steady_clock::time_point playbackStartTime;
+  double seekPosition{0.0};  // Current seek position offset
+  std::mutex playbackTimeMutex;
 
   // Thread safety for operations
   std::mutex operationMutex;

@@ -217,8 +217,8 @@ void UIModule::drawRightPanel(bool isPlaying) {
   cv::rectangle(displayFrame, panelRect, config.textColor, 2);
 
   int yPos = 10;
-  int buttonWidth = config.rightPanelWidth - 20;
-  int buttonHeight = 30;
+  // int buttonWidth = config.rightPanelWidth - 20;  // Reserved for future use
+  // int buttonHeight = 30;  // Reserved for future use
   int xStart = videoDisplayWidth + 10;
 
   // Helper lambda to draw a button

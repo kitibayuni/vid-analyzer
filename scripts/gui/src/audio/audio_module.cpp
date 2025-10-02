@@ -12,7 +12,14 @@ private:
   size_t capacity;
 
 public:
-  CircularAudioBuffer(size_t size) : capacity(size) { buffer.resize(capacity); }
+  CircularAudioBuffer(size_t size) : capacity(size) {
+    try {
+      buffer.resize(capacity);
+    } catch (const std::bad_alloc& e) {
+      std::cerr << "Failed to allocate audio buffer of size " << capacity << ": " << e.what() << std::endl;
+      throw;
+    }
+  }
 
   bool write(const int16_t *data, size_t samples) {
     size_t write_idx = write_pos.load(std::memory_order_relaxed);
@@ -119,7 +126,18 @@ bool AudioModule::initialize(const AudioConfig &config) {
   // Create circular buffer based on configuration
   size_t bufferSize =
       config.sampleRate * config.channels * config.bufferDurationSeconds;
-  audioBuffer.reset(new CircularAudioBuffer(bufferSize));
+
+  std::cout << "Allocating audio buffer: " << bufferSize << " samples ("
+            << (bufferSize * sizeof(int16_t) / 1024.0 / 1024.0) << " MB)" << std::endl;
+
+  try {
+    audioBuffer.reset(new CircularAudioBuffer(bufferSize));
+  } catch (const std::exception& e) {
+    std::cerr << "Failed to create audio buffer: " << e.what() << std::endl;
+    SDL_CloseAudioDevice(audioDevice);
+    SDL_Quit();
+    return false;
+  }
 
   std::cout << "AudioModule initialized successfully" << std::endl;
   std::cout << "Audio config: " << audioSpec.freq << "Hz, "
@@ -226,25 +244,35 @@ bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
 }
 
 bool AudioModule::setupResampler() {
+  std::cout << "Setting up audio resampler..." << std::endl;
+
   swrContext = swr_alloc();
-  if (!swrContext)
+  if (!swrContext) {
+    std::cerr << "Failed to allocate resampler context" << std::endl;
     return false;
+  }
 
   AVChannelLayout input_ch_layout, output_ch_layout;
 
+  // Get input channel layout
   if (codecContext->ch_layout.nb_channels > 0) {
+    std::cout << "Input channel layout: " << codecContext->ch_layout.nb_channels << " channels" << std::endl;
     av_channel_layout_copy(&input_ch_layout, &codecContext->ch_layout);
+  } else if (codecContext->channels > 0) {
+    // Fallback to old API
+    std::cout << "Using legacy channels field: " << codecContext->channels << " channels" << std::endl;
+    av_channel_layout_default(&input_ch_layout, codecContext->channels);
   } else {
-    av_channel_layout_default(&input_ch_layout,
-                              codecContext->ch_layout.nb_channels);
+    std::cerr << "No channel information available in codec context" << std::endl;
+    swr_free(&swrContext);
+    return false;
   }
 
   av_channel_layout_default(&output_ch_layout, audioSpec.channels);
 
   av_opt_set_chlayout(swrContext, "in_chlayout", &input_ch_layout, 0);
   av_opt_set_int(swrContext, "in_sample_rate", codecContext->sample_rate, 0);
-  av_opt_set_sample_fmt(swrContext, "in_sample_fmt", codecContext->sample_fmt,
-                        0);
+  av_opt_set_sample_fmt(swrContext, "in_sample_fmt", codecContext->sample_fmt, 0);
 
   av_opt_set_chlayout(swrContext, "out_chlayout", &output_ch_layout, 0);
   av_opt_set_int(swrContext, "out_sample_rate", audioSpec.freq, 0);
@@ -255,7 +283,15 @@ bool AudioModule::setupResampler() {
   av_channel_layout_uninit(&input_ch_layout);
   av_channel_layout_uninit(&output_ch_layout);
 
-  return result >= 0;
+  if (result < 0) {
+    char errbuf[AV_ERROR_MAX_STRING_SIZE];
+    av_strerror(result, errbuf, sizeof(errbuf));
+    std::cerr << "Failed to initialize resampler: " << errbuf << std::endl;
+    return false;
+  }
+
+  std::cout << "Audio resampler initialized successfully" << std::endl;
+  return true;
 }
 
 void AudioModule::audioCallback(void *userdata, Uint8 *stream, int len) {

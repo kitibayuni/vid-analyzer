@@ -1,22 +1,17 @@
-Cleaning build files...
-rm -rf build modular_video_player
 Compiling main.cpp...
-g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/main.cpp -o build/objects/main.o
-Compiling audio module...
-g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/audio/audio_module.cpp -o build/objects/audio/audio_module.o
+g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/main.cpp -o build/objects/main.o
 Compiling video module...
-g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/video/video_module.cpp -o build/objects/video/video_module.o
+g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/video/video_module.cpp -o build/objects/video/video_module.o
+src/video/video_module.cpp: In member function ‘bool VideoModule::setupDecoder()’:
+src/video/video_module.cpp:193:21: warning: unused variable ‘codecName’ [-Wunused-variable]
+  193 |         const char* codecName = avcodec_get_name(codecParams->codec_id);
+      |                     ^~~~~~~~~
+src/video/video_module.cpp: In lambda function:
+src/video/video_module.cpp:237:59: warning: unused parameter ‘ctx’ [-Wunused-parameter]
+  237 |             codecContext->get_format = [](AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) -> enum AVPixelFormat {
+      |                                           ~~~~~~~~~~~~~~~~^~~
 Compiling media controller...
-g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/media/media_controller.cpp -o build/objects/media/media_controller.o
-Compiling UI module...
-g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/ui/ui_module.cpp -o build/objects/ui/ui_module.o
-src/ui/ui_module.cpp: In member function ‘void UIModule::drawRightPanel(bool)’:
-src/ui/ui_module.cpp:220:7: warning: unused variable ‘buttonWidth’ [-Wunused-variable]
-  220 |   int buttonWidth = config.rightPanelWidth - 20;
-      |       ^~~~~~~~~~~
-src/ui/ui_module.cpp:221:7: warning: unused variable ‘buttonHeight’ [-Wunused-variable]
-  221 |   int buttonHeight = 30;
-      |       ^~~~~~~~~~~~
+g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/media/media_controller.cpp -o build/objects/media/media_controller.o
 Linking modular_video_player...
-g++ build/objects/main.o build/objects/audio/audio_module.o build/objects/video/video_module.o build/objects/media/media_controller.o build/objects/ui/ui_module.o -o modular_video_player -lopencv_stitching -lopencv_alphamat -lopencv_aruco -lopencv_barcode -lopencv_bgsegm -lopencv_bioinspired -lopencv_ccalib -lopencv_cvv -lopencv_dnn_objdetect -lopencv_dnn_superres -lopencv_dpm -lopencv_face -lopencv_freetype -lopencv_fuzzy -lopencv_hdf -lopencv_hfs -lopencv_img_hash -lopencv_intensity_transform -lopencv_line_descriptor -lopencv_mcc -lopencv_quality -lopencv_rapid -lopencv_reg -lopencv_rgbd -lopencv_saliency -lopencv_shape -lopencv_stereo -lopencv_structured_light -lopencv_phase_unwrapping -lopencv_superres -lopencv_optflow -lopencv_surface_matching -lopencv_tracking -lopencv_highgui -lopencv_datasets -lopencv_text -lopencv_plot -lopencv_ml -lopencv_videostab -lopencv_videoio -lopencv_viz -lopencv_wechat_qrcode -lopencv_ximgproc -lopencv_video -lopencv_xobjdetect -lopencv_objdetect -lopencv_calib3d -lopencv_imgcodecs -lopencv_features2d -lopencv_dnn -lopencv_flann -lopencv_xphoto -lopencv_photo -lopencv_imgproc -lopencv_core  -lSDL2  -lavformat -lavcodec -lswresample -lavutil  -pthread
+g++ build/objects/main.o build/objects/audio/audio_module.o build/objects/video/video_module.o build/objects/media/media_controller.o build/objects/ui/ui_module.o -o modular_video_player -lopencv_stitching -lopencv_alphamat -lopencv_aruco -lopencv_barcode -lopencv_bgsegm -lopencv_bioinspired -lopencv_ccalib -lopencv_cvv -lopencv_dnn_objdetect -lopencv_dnn_superres -lopencv_dpm -lopencv_face -lopencv_freetype -lopencv_fuzzy -lopencv_hdf -lopencv_hfs -lopencv_img_hash -lopencv_intensity_transform -lopencv_line_descriptor -lopencv_mcc -lopencv_quality -lopencv_rapid -lopencv_reg -lopencv_rgbd -lopencv_saliency -lopencv_shape -lopencv_stereo -lopencv_structured_light -lopencv_phase_unwrapping -lopencv_superres -lopencv_optflow -lopencv_surface_matching -lopencv_tracking -lopencv_highgui -lopencv_datasets -lopencv_text -lopencv_plot -lopencv_ml -lopencv_videostab -lopencv_videoio -lopencv_viz -lopencv_wechat_qrcode -lopencv_ximgproc -lopencv_video -lopencv_xobjdetect -lopencv_objdetect -lopencv_calib3d -lopencv_imgcodecs -lopencv_features2d -lopencv_dnn -lopencv_flann -lopencv_xphoto -lopencv_photo -lopencv_imgproc -lopencv_core  -lSDL2  -lavformat -lavcodec -lswresample -lswscale -lavutil  -pthread
 Build complete!
