@@ -4,6 +4,21 @@ Compiling main.cpp...
 g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/main.cpp -o build/objects/main.o
 Compiling audio module...
 g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/audio/audio_module.cpp -o build/objects/audio/audio_module.o
+In file included from src/audio/audio_module.cpp:1:
+src/audio/audio_module.h: In constructor ‘AudioModule::AudioModule()’:
+src/audio/audio_module.h:54:18: warning: ‘AudioModule::outputSampleFormat’ will be initialized after [-Wreorder]
+   54 |   AVSampleFormat outputSampleFormat;  // Selected output format for resampler
+      |                  ^~~~~~~~~~~~~~~~~~
+src/audio/audio_module.h:46:19: warning:   ‘SDL_AudioFormat AudioModule::selectedFormat’ [-Wreorder]
+   46 |   SDL_AudioFormat selectedFormat;  // F32 or F16 based on codec
+      |                   ^~~~~~~~~~~~~~
+src/audio/audio_module.cpp:103:1: warning:   when initialized here [-Wreorder]
+  103 | AudioModule::AudioModule()
+      | ^~~~~~~~~~~
+src/audio/audio_module.cpp: In member function ‘bool AudioModule::initialize(const AudioConfig&)’:
+src/audio/audio_module.cpp:112:49: warning: unused parameter ‘config’ [-Wunused-parameter]
+  112 | bool AudioModule::initialize(const AudioConfig &config) {
+      |                              ~~~~~~~~~~~~~~~~~~~^~~~~~
 Compiling video module...
 g++ -std=c++17 -O3 -march=native -Wall -Wextra -DLINUX -DNDEBUG -Isrc -Isrc/audio -Isrc/video -Isrc/media -Isrc/ui -I/usr/include/opencv4  -I/usr/include/SDL2 -D_REENTRANT  -I/usr/include/x86_64-linux-gnu  -c src/video/video_module.cpp -o build/objects/video/video_module.o
 Compiling media controller...

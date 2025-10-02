@@ -1,7 +1,19 @@
-Pausing playback...
-Audio paused
-Video decoding stopped
-Playback paused at 1.57896s
-terminate called after throwing an instance of 'std::invalid_argument'
-  what():  stod
+Resized window to: 1480x800 (video: 1280x720)
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+getCurrentFrame called - targetTime: 0, queue size: 0
+Starting playback...
+Preloading video buffer...
+Buffer ready: 68 frames
+Video decoding started
+Audio playing
+Playback started
+malloc(): corrupted top size
 Aborted (core dumped)

@@ -20,15 +20,12 @@ extern "C" {
 class CircularAudioBuffer;
 
 struct AudioConfig {
-  int sampleRate = 44100;
-  int channels = 2;
-  int bufferSize = 2048;
+  int bufferSize = 1024;  // Reduced from 2048 for lower latency
   int bufferDurationSeconds = 20;
 
   AudioConfig() = default;
-  AudioConfig(int rate, int ch, int bufSz, int bufDur)
-      : sampleRate(rate), channels(ch), bufferSize(bufSz),
-        bufferDurationSeconds(bufDur) {}
+  AudioConfig(int bufSz, int bufDur)
+      : bufferSize(bufSz), bufferDurationSeconds(bufDur) {}
 };
 
 struct AudioStats {
@@ -46,12 +43,15 @@ private:
   SDL_AudioDeviceID audioDevice;
   SDL_AudioSpec audioSpec;
   std::unique_ptr<CircularAudioBuffer> audioBuffer;
+  SDL_AudioFormat selectedFormat;  // F32 or F16 based on codec
+  int bytesPerSample;  // 4 for F32, 2 for F16
 
   // FFmpeg contexts
   AVFormatContext *formatContext;
   AVCodecContext *codecContext;
   SwrContext *swrContext;
   int streamIndex;
+  AVSampleFormat outputSampleFormat;  // Selected output format for resampler
 
   // Synchronization and state
   std::atomic<double> clockTime{0.0};
@@ -75,7 +75,7 @@ private:
 
     AudioBuffers();
     ~AudioBuffers();
-    bool allocate(int samples, int channels);
+    bool allocate(int samples, int channels, AVSampleFormat format);
   } audioBuffers;
 
   // Static callback for SDL
@@ -85,7 +85,7 @@ private:
   void decodeThreadFunction();
 
   // Internal helpers
-  bool initializeSDL(const AudioConfig &config);
+  bool initializeSDL(int sampleRate, int channels, SDL_AudioFormat format, int bufferSize);
   bool setupResampler();
   void cleanup();
 

@@ -3,10 +3,10 @@
 #include <iostream>
 #include <vector>
 
-// Optimized circular audio buffer implementation
+// Optimized circular audio buffer implementation (format-agnostic, works with bytes)
 class CircularAudioBuffer {
 private:
-  std::vector<int16_t> buffer;
+  std::vector<uint8_t> buffer;
   std::atomic<size_t> write_pos{0};
   std::atomic<size_t> read_pos{0};
   size_t capacity;
@@ -14,7 +14,7 @@ private:
 public:
   CircularAudioBuffer(size_t size) : capacity(size) { buffer.resize(capacity); }
 
-  bool write(const int16_t *data, size_t samples) {
+  bool write(const uint8_t *data, size_t bytes) {
     size_t write_idx = write_pos.load(std::memory_order_relaxed);
     size_t read_idx = read_pos.load(std::memory_order_acquire);
 
@@ -22,10 +22,10 @@ public:
                            ? (read_idx - write_idx - 1)
                            : (capacity - write_idx + read_idx - 1);
 
-    if (available < samples)
+    if (available < bytes)
       return false;
 
-    for (size_t i = 0; i < samples; i++) {
+    for (size_t i = 0; i < bytes; i++) {
       buffer[write_idx] = data[i];
       write_idx = (write_idx + 1) % capacity;
     }
@@ -34,7 +34,7 @@ public:
     return true;
   }
 
-  size_t read(int16_t *data, size_t max_samples) {
+  size_t read(uint8_t *data, size_t max_bytes) {
     size_t write_idx = write_pos.load(std::memory_order_acquire);
     size_t read_idx = read_pos.load(std::memory_order_relaxed);
 
@@ -42,7 +42,7 @@ public:
                            ? (write_idx - read_idx)
                            : (capacity - read_idx + write_idx);
 
-    size_t to_read = std::min(available, max_samples);
+    size_t to_read = std::min(available, max_bytes);
 
     for (size_t i = 0; i < to_read; i++) {
       data[i] = buffer[read_idx];
@@ -81,7 +81,7 @@ AudioModule::AudioBuffers::~AudioBuffers() {
   }
 }
 
-bool AudioModule::AudioBuffers::allocate(int samples, int channels) {
+bool AudioModule::AudioBuffers::allocate(int samples, int channels, AVSampleFormat format) {
   if (samples <= max_samples && output_data)
     return true;
 
@@ -91,7 +91,7 @@ bool AudioModule::AudioBuffers::allocate(int samples, int channels) {
   }
 
   int ret = av_samples_alloc_array_and_samples(
-      &output_data, &output_linesize, channels, samples, AV_SAMPLE_FMT_S16, 0);
+      &output_data, &output_linesize, channels, samples, format, 0);
   if (ret < 0)
     return false;
 
@@ -102,44 +102,41 @@ bool AudioModule::AudioBuffers::allocate(int samples, int channels) {
 // AudioModule implementation
 AudioModule::AudioModule()
     : audioDevice(0), formatContext(nullptr), codecContext(nullptr),
-      swrContext(nullptr), streamIndex(-1) {
+      swrContext(nullptr), streamIndex(-1), outputSampleFormat(AV_SAMPLE_FMT_FLT),
+      selectedFormat(AUDIO_F32SYS), bytesPerSample(4) {
   lastClockUpdate = std::chrono::steady_clock::now();
 }
 
 AudioModule::~AudioModule() { shutdown(); }
 
 bool AudioModule::initialize(const AudioConfig &config) {
-  std::cout << "Initializing AudioModule..." << std::endl;
+  std::cout << "Initializing AudioModule (will configure based on codec)..." << std::endl;
 
-  if (!initializeSDL(config)) {
-    std::cerr << "Failed to initialize SDL audio" << std::endl;
-    return false;
-  }
-
-  // Create circular buffer based on configuration
-  size_t bufferSize =
-      config.sampleRate * config.channels * config.bufferDurationSeconds;
-  audioBuffer.reset(new CircularAudioBuffer(bufferSize));
-
-  std::cout << "AudioModule initialized successfully" << std::endl;
-  std::cout << "Audio config: " << audioSpec.freq << "Hz, "
-            << static_cast<int>(audioSpec.channels) << " channels, "
-            << "buffer: " << config.bufferDurationSeconds << "s" << std::endl;
-
+  // SDL will be initialized when we load the stream and know the codec params
+  // Just store the config for now
   return true;
 }
 
-bool AudioModule::initializeSDL(const AudioConfig &config) {
+bool AudioModule::initializeSDL(int sampleRate, int channels, SDL_AudioFormat format, int bufferSize) {
+  // Close existing device if already open
+  if (audioDevice != 0) {
+    SDL_CloseAudioDevice(audioDevice);
+    audioDevice = 0;
+  }
+
   if (SDL_Init(SDL_INIT_AUDIO) < 0) {
     std::cerr << "SDL initialization failed: " << SDL_GetError() << std::endl;
     return false;
   }
 
+  selectedFormat = format;
+  bytesPerSample = (format == AUDIO_F32SYS) ? 4 : 2;  // F32 = 4 bytes, F16 = 2 bytes
+
   SDL_AudioSpec desired;
-  desired.freq = config.sampleRate;
-  desired.format = AUDIO_S16LSB;
-  desired.channels = config.channels;
-  desired.samples = config.bufferSize;
+  desired.freq = sampleRate;
+  desired.format = format;
+  desired.channels = channels;
+  desired.samples = bufferSize;
   desired.callback = audioCallback;
   desired.userdata = this;
 
@@ -150,6 +147,15 @@ bool AudioModule::initializeSDL(const AudioConfig &config) {
     SDL_Quit();
     return false;
   }
+
+  // Create circular buffer based on sample rate and channels
+  size_t bufferDuration = 20;  // 20 seconds
+  size_t bufferSizeBytes = sampleRate * channels * bytesPerSample * bufferDuration;
+  audioBuffer.reset(new CircularAudioBuffer(bufferSizeBytes));
+
+  std::cout << "SDL Audio initialized: " << audioSpec.freq << "Hz, "
+            << static_cast<int>(audioSpec.channels) << " channels, "
+            << (bytesPerSample == 4 ? "F32" : "F16") << " format" << std::endl;
 
   return true;
 }
@@ -205,6 +211,35 @@ bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
     return false;
   }
 
+  // Determine audio format based on codec sample format
+  SDL_AudioFormat sdlFormat;
+
+  // Check codec's sample format and select appropriate SDL format
+  if (codecContext->sample_fmt == AV_SAMPLE_FMT_FLT ||
+      codecContext->sample_fmt == AV_SAMPLE_FMT_FLTP ||
+      codecContext->sample_fmt == AV_SAMPLE_FMT_DBL ||
+      codecContext->sample_fmt == AV_SAMPLE_FMT_DBLP) {
+    // Use F32 for float/double codecs
+    sdlFormat = AUDIO_F32SYS;
+    outputSampleFormat = AV_SAMPLE_FMT_FLT;
+    std::cout << "Selected F32 format for float-based codec" << std::endl;
+  } else {
+    // Use F32 for better quality (was S16)
+    sdlFormat = AUDIO_F32SYS;
+    outputSampleFormat = AV_SAMPLE_FMT_FLT;
+    std::cout << "Selected F32 format for integer-based codec" << std::endl;
+  }
+
+  // Initialize SDL with codec's native parameters
+  if (!initializeSDL(codecContext->sample_rate,
+                     codecContext->ch_layout.nb_channels,
+                     sdlFormat,
+                     1024)) {  // Buffer size from AudioConfig
+    std::cerr << "Failed to initialize SDL audio" << std::endl;
+    avcodec_free_context(&codecContext);
+    return false;
+  }
+
   if (!setupResampler()) {
     std::cerr << "Failed to setup audio resampler" << std::endl;
     avcodec_free_context(&codecContext);
@@ -248,7 +283,7 @@ bool AudioModule::setupResampler() {
 
   av_opt_set_chlayout(swrContext, "out_chlayout", &output_ch_layout, 0);
   av_opt_set_int(swrContext, "out_sample_rate", audioSpec.freq, 0);
-  av_opt_set_sample_fmt(swrContext, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+  av_opt_set_sample_fmt(swrContext, "out_sample_fmt", outputSampleFormat, 0);
 
   int result = swr_init(swrContext);
 
@@ -263,28 +298,34 @@ void AudioModule::audioCallback(void *userdata, Uint8 *stream, int len) {
 
   SDL_memset(stream, 0, len);
 
-  int16_t *output = reinterpret_cast<int16_t *>(stream);
-  int samples_needed = len / sizeof(int16_t);
+  // Read bytes from buffer
+  size_t bytes_read = module->audioBuffer->read(stream, len);
 
-  int samples_read = module->audioBuffer->read(output, samples_needed);
-
-  if (samples_read < samples_needed) {
+  if (bytes_read < static_cast<size_t>(len)) {
     module->underrunCount++;
   }
 
-  // Update master clock
-  if (samples_read > 0) {
-    double time_per_sample =
-        1.0 / (module->audioSpec.freq * module->audioSpec.channels);
-    double audio_time_advance = samples_read * time_per_sample;
+  // Update master clock based on bytes read
+  if (bytes_read > 0) {
+    // Calculate samples from bytes
+    size_t samples_read = bytes_read / module->bytesPerSample;
+    double samples_per_channel = static_cast<double>(samples_read) / module->audioSpec.channels;
+    double audio_time_advance = samples_per_channel / module->audioSpec.freq;
     module->clockTime.store(module->clockTime.load() + audio_time_advance);
     module->lastClockUpdate = std::chrono::steady_clock::now();
   }
 
-  // Apply volume
+  // Apply volume (F32 format)
   float vol = module->volume.load();
-  for (int i = 0; i < samples_read; i++) {
-    output[i] = static_cast<int16_t>(output[i] * vol);
+  if (module->selectedFormat == AUDIO_F32SYS && bytes_read > 0) {
+    float *output = reinterpret_cast<float *>(stream);
+    size_t num_samples = bytes_read / sizeof(float);
+    for (size_t i = 0; i < num_samples; i++) {
+      output[i] = output[i] * vol;
+      // Clamp to prevent distortion
+      if (output[i] > 1.0f) output[i] = 1.0f;
+      if (output[i] < -1.0f) output[i] = -1.0f;
+    }
   }
 }
 
@@ -302,15 +343,15 @@ void AudioModule::decodeThreadFunction() {
                         while (avcodec_receive_frame(codecContext, frame) >= 0) {
                             int output_samples = swr_get_out_samples(swrContext, frame->nb_samples);
                             if (output_samples > 0) {
-                                if (audioBuffers.allocate(output_samples, audioSpec.channels)) {
+                                if (audioBuffers.allocate(output_samples, audioSpec.channels, outputSampleFormat)) {
                                     int resampled = swr_convert(swrContext, audioBuffers.output_data, output_samples,
                                                               (const uint8_t**)frame->data, frame->nb_samples);
-                                    
+
                                     if (resampled > 0) {
-                                        int16_t* samples = reinterpret_cast<int16_t*>(audioBuffers.output_data[0]);
-                                        int total_samples = resampled * audioSpec.channels;
-                                        
-                                        if (!audioBuffer->write(samples, total_samples)) {
+                                        uint8_t* samples = audioBuffers.output_data[0];
+                                        size_t total_bytes = resampled * audioSpec.channels * bytesPerSample;
+
+                                        if (!audioBuffer->write(samples, total_bytes)) {
                                             overrunCount++;
                                         }
                                     }
