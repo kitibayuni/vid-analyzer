@@ -48,6 +48,7 @@ private:
 
   // Synchronization and state
   std::atomic<double> clockTime{0.0};
+  std::atomic<double> totalDecodedTime{0.0};  // Total time of decoded/queued audio
   std::atomic<float> volume{0.7f};
   std::atomic<bool> isPlaying{false};
   std::atomic<bool> shouldStop{false};

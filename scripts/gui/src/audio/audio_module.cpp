@@ -114,7 +114,7 @@ bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
 
   if (!initializeSDL(codecContext->sample_rate,
                      codecContext->ch_layout.nb_channels,
-                     2048)) {  // Buffer size (smaller for lower latency)
+                     4096)) {  // Buffer size (4096 samples for stable buffering)
     std::cerr << "Failed to initialize SDL audio" << std::endl;
     avcodec_free_context(&codecContext);
     return false;
@@ -128,6 +128,7 @@ bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
 
   // Reset state
   clockTime = 0.0;
+  totalDecodedTime = 0.0;
   underrunCount = 0;
   overrunCount = 0;
   audioStarted = false;
@@ -290,6 +291,10 @@ void AudioModule::decodeThreadFunction() {
                 // Queue the audio data
                 if (SDL_QueueAudio(audioDevice, out_buffer[0], audio_bytes) < 0) {
                     std::cerr << "SDL_QueueAudio error: " << SDL_GetError() << std::endl;
+                } else {
+                    // Track total decoded time for accurate clock synchronization
+                    double frame_duration = static_cast<double>(converted_samples) / audioSpec.freq;
+                    totalDecodedTime.store(totalDecodedTime.load() + frame_duration);
                 }
             }
 
@@ -333,7 +338,11 @@ void AudioModule::decodeThreadFunction() {
                 samples[i] = static_cast<int16_t>(temp);
             }
 
-            SDL_QueueAudio(audioDevice, out_buffer[0], audio_bytes);
+            if (SDL_QueueAudio(audioDevice, out_buffer[0], audio_bytes) == 0) {
+                // Track flushed audio time
+                double frame_duration = static_cast<double>(converted_samples) / audioSpec.freq;
+                totalDecodedTime.store(totalDecodedTime.load() + frame_duration);
+            }
             av_freep(&out_buffer[0]);
         }
     }
@@ -367,6 +376,7 @@ void AudioModule::pause() {
 void AudioModule::stop() {
   pause();
   clockTime = 0.0;
+  totalDecodedTime = 0.0;
   audioStarted = false;
   SDL_ClearQueuedAudio(audioDevice);
 }
@@ -398,8 +408,9 @@ bool AudioModule::seek(double timeSeconds) {
   // Flush codec buffers
   avcodec_flush_buffers(codecContext);
 
-  // Update clock
+  // Update clock and reset decoded time tracking
   clockTime = timeSeconds;
+  totalDecodedTime = 0.0;
   lastClockUpdate = std::chrono::steady_clock::now();
 
   if (wasPlaying) {
@@ -424,19 +435,19 @@ double AudioModule::getCurrentTime() const {
     return clockTime.load();
   }
 
-  // Calculate time based on how much audio has been played
-  // (total time - buffered time)
-  double base_time = clockTime.load();
+  // Queue-based clock synchronization:
+  // Current playback time = total decoded time - buffered (queued) time
+  double decoded_time = totalDecodedTime.load();
 
-  if (isPlaying) {
-    // For queue-based audio, we can estimate based on elapsed time
-    // since SDL manages playback timing internally
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration<double>(now - lastClockUpdate).count();
-    return base_time + elapsed;
-  }
+  // Calculate how much audio is buffered (not yet played)
+  uint32_t queued_bytes = SDL_GetQueuedAudioSize(audioDevice);
+  double buffered_time = static_cast<double>(queued_bytes) /
+                         (audioSpec.freq * audioSpec.channels * sizeof(int16_t));
 
-  return base_time;
+  // Actual playback position
+  double playback_time = clockTime.load() + (decoded_time - buffered_time);
+
+  return playback_time;
 }
 
 void AudioModule::setCurrentTime(double timeSeconds) {
