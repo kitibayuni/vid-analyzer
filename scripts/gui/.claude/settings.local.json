@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Read(//mnt/c/Users/Administrator/Code/vid-analyzer/**)",
+      "Bash(make:*)"
     ],
     "deny": [],
     "ask": []

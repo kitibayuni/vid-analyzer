@@ -5,8 +5,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <thread>
 #include <mutex>
+#include <thread>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -15,9 +15,6 @@ extern "C" {
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 }
-
-// Forward declarations
-class CircularAudioBuffer;
 
 struct AudioConfig {
   int bufferSize = 1024;  // Reduced from 2048 for lower latency
@@ -42,22 +39,19 @@ private:
   // SDL Audio
   SDL_AudioDeviceID audioDevice;
   SDL_AudioSpec audioSpec;
-  std::unique_ptr<CircularAudioBuffer> audioBuffer;
-  SDL_AudioFormat selectedFormat;  // F32 or F16 based on codec
-  int bytesPerSample;  // 4 for F32, 2 for F16
 
   // FFmpeg contexts
   AVFormatContext *formatContext;
   AVCodecContext *codecContext;
   SwrContext *swrContext;
   int streamIndex;
-  AVSampleFormat outputSampleFormat;  // Selected output format for resampler
 
   // Synchronization and state
   std::atomic<double> clockTime{0.0};
   std::atomic<float> volume{0.7f};
   std::atomic<bool> isPlaying{false};
   std::atomic<bool> shouldStop{false};
+  std::atomic<bool> endOfFile{false};
   std::chrono::steady_clock::time_point lastClockUpdate;
 
   // Threading
@@ -67,25 +61,18 @@ private:
   std::atomic<int> underrunCount{0};
   std::atomic<int> overrunCount{0};
 
-  // Preallocated buffers for performance
-  struct AudioBuffers {
-    uint8_t **output_data;
-    int output_linesize;
-    int max_samples;
+  // Buffer thresholds for queue-based audio
+  static constexpr uint32_t MIN_BUFFER_SIZE = 8192;
+  static constexpr uint32_t MAX_BUFFER_SIZE = 65536;
+  static constexpr uint32_t TARGET_BUFFER_SIZE = 32768;
 
-    AudioBuffers();
-    ~AudioBuffers();
-    bool allocate(int samples, int channels, AVSampleFormat format);
-  } audioBuffers;
-
-  // Static callback for SDL
-  static void audioCallback(void *userdata, Uint8 *stream, int len);
+  std::atomic<bool> audioStarted{false};
 
   // Thread function
   void decodeThreadFunction();
 
   // Internal helpers
-  bool initializeSDL(int sampleRate, int channels, SDL_AudioFormat format, int bufferSize);
+  bool initializeSDL(int sampleRate, int channels, int bufferSize);
   bool setupResampler();
   void cleanup();
 

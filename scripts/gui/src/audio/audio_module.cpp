@@ -4,123 +4,10 @@
 #include <iostream>
 #include <vector>
 
-// Optimized circular audio buffer implementation (format-agnostic, works with bytes)
-class CircularAudioBuffer {
-private:
-  std::vector<uint8_t> buffer;
-  std::atomic<size_t> write_pos{0};
-  std::atomic<size_t> read_pos{0};
-  size_t capacity;
-
-public:
-  CircularAudioBuffer(size_t size) : capacity(size) { buffer.resize(capacity); }
-
-  bool write(const uint8_t *data, size_t bytes) {
-    size_t write_idx = write_pos.load(std::memory_order_relaxed);
-    size_t read_idx = read_pos.load(std::memory_order_acquire);
-
-    size_t available = (read_idx > write_idx)
-                           ? (read_idx - write_idx - 1)
-                           : (capacity - write_idx + read_idx - 1);
-
-    if (available < bytes)
-      return false;
-
-    // Optimized: use memcpy for contiguous chunks
-    size_t bytes_to_end = capacity - write_idx;
-    if (bytes <= bytes_to_end) {
-      // Single contiguous write
-      std::memcpy(&buffer[write_idx], data, bytes);
-      write_idx = (write_idx + bytes) % capacity;
-    } else {
-      // Split write: end of buffer + beginning
-      std::memcpy(&buffer[write_idx], data, bytes_to_end);
-      std::memcpy(&buffer[0], data + bytes_to_end, bytes - bytes_to_end);
-      write_idx = bytes - bytes_to_end;
-    }
-
-    write_pos.store(write_idx, std::memory_order_release);
-    return true;
-  }
-
-  size_t read(uint8_t *data, size_t max_bytes) {
-    size_t write_idx = write_pos.load(std::memory_order_acquire);
-    size_t read_idx = read_pos.load(std::memory_order_relaxed);
-
-    size_t available = (write_idx >= read_idx)
-                           ? (write_idx - read_idx)
-                           : (capacity - read_idx + write_idx);
-
-    size_t to_read = std::min(available, max_bytes);
-
-    // Optimized: use memcpy for contiguous chunks
-    size_t bytes_to_end = capacity - read_idx;
-    if (to_read <= bytes_to_end) {
-      // Single contiguous read
-      std::memcpy(data, &buffer[read_idx], to_read);
-      read_idx = (read_idx + to_read) % capacity;
-    } else {
-      // Split read: end of buffer + beginning
-      std::memcpy(data, &buffer[read_idx], bytes_to_end);
-      std::memcpy(data + bytes_to_end, &buffer[0], to_read - bytes_to_end);
-      read_idx = to_read - bytes_to_end;
-    }
-
-    read_pos.store(read_idx, std::memory_order_release);
-    return to_read;
-  }
-
-  void clear() {
-    write_pos.store(0, std::memory_order_relaxed);
-    read_pos.store(0, std::memory_order_relaxed);
-  }
-
-  size_t available() const {
-    size_t write_idx = write_pos.load(std::memory_order_relaxed);
-    size_t read_idx = read_pos.load(std::memory_order_relaxed);
-    return (write_idx >= read_idx) ? (write_idx - read_idx)
-                                   : (capacity - read_idx + write_idx);
-  }
-
-  double fullness_ratio() const {
-    return static_cast<double>(available()) / capacity;
-  }
-};
-
-// AudioBuffers implementation
-AudioModule::AudioBuffers::AudioBuffers()
-    : output_data(nullptr), output_linesize(0), max_samples(0) {}
-
-AudioModule::AudioBuffers::~AudioBuffers() {
-  if (output_data) {
-    av_freep(&output_data[0]);
-    av_freep(&output_data);
-  }
-}
-
-bool AudioModule::AudioBuffers::allocate(int samples, int channels, AVSampleFormat format) {
-  if (samples <= max_samples && output_data)
-    return true;
-
-  if (output_data) {
-    av_freep(&output_data[0]);
-    av_freep(&output_data);
-  }
-
-  int ret = av_samples_alloc_array_and_samples(
-      &output_data, &output_linesize, channels, samples, format, 0);
-  if (ret < 0)
-    return false;
-
-  max_samples = samples;
-  return true;
-}
-
 // AudioModule implementation
 AudioModule::AudioModule()
     : audioDevice(0), formatContext(nullptr), codecContext(nullptr),
-      swrContext(nullptr), streamIndex(-1), outputSampleFormat(AV_SAMPLE_FMT_FLT),
-      selectedFormat(AUDIO_F32SYS), bytesPerSample(4) {
+      swrContext(nullptr), streamIndex(-1) {
   lastClockUpdate = std::chrono::steady_clock::now();
 }
 
@@ -134,7 +21,7 @@ bool AudioModule::initialize(const AudioConfig &config) {
   return true;
 }
 
-bool AudioModule::initializeSDL(int sampleRate, int channels, SDL_AudioFormat format, int bufferSize) {
+bool AudioModule::initializeSDL(int sampleRate, int channels, int bufferSize) {
   // Close existing device if already open
   if (audioDevice != 0) {
     SDL_CloseAudioDevice(audioDevice);
@@ -146,16 +33,13 @@ bool AudioModule::initializeSDL(int sampleRate, int channels, SDL_AudioFormat fo
     return false;
   }
 
-  selectedFormat = format;
-  bytesPerSample = (format == AUDIO_F32SYS) ? 4 : 2;  // F32 = 4 bytes, F16 = 2 bytes
-
   SDL_AudioSpec desired;
+  SDL_zero(desired);
   desired.freq = sampleRate;
-  desired.format = format;
+  desired.format = AUDIO_S16SYS;  // Fixed S16 format
   desired.channels = channels;
   desired.samples = bufferSize;
-  desired.callback = audioCallback;
-  desired.userdata = this;
+  desired.callback = nullptr;  // Using queue audio instead of callback
 
   audioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &audioSpec, 0);
 
@@ -165,16 +49,11 @@ bool AudioModule::initializeSDL(int sampleRate, int channels, SDL_AudioFormat fo
     return false;
   }
 
-  // Create circular buffer based on sample rate and channels
-  size_t bufferDuration = 10;  // 10 seconds (reduced from 20 for efficiency)
-  size_t bufferSizeBytes = sampleRate * channels * bytesPerSample * bufferDuration;
-  audioBuffer.reset(new CircularAudioBuffer(bufferSizeBytes));
+  // Start with audio paused
+  SDL_PauseAudioDevice(audioDevice, 1);
 
   std::cout << "SDL Audio initialized: " << audioSpec.freq << "Hz, "
-            << static_cast<int>(audioSpec.channels) << " channels, "
-            << (bytesPerSample == 4 ? "F32" : "F16") << " format" << std::endl;
-  std::cout << "Ring buffer: " << bufferDuration << "s ("
-            << (bufferSizeBytes / 1024.0 / 1024.0) << " MB)" << std::endl;
+            << static_cast<int>(audioSpec.channels) << " channels, S16 format" << std::endl;
 
   return true;
 }
@@ -230,30 +109,12 @@ bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
     return false;
   }
 
-  // Determine audio format based on codec sample format
-  SDL_AudioFormat sdlFormat;
+  // Initialize SDL with codec's native parameters (using S16 format)
+  std::cout << "Using S16 audio format" << std::endl;
 
-  // Check codec's sample format and select appropriate SDL format
-  if (codecContext->sample_fmt == AV_SAMPLE_FMT_FLT ||
-      codecContext->sample_fmt == AV_SAMPLE_FMT_FLTP ||
-      codecContext->sample_fmt == AV_SAMPLE_FMT_DBL ||
-      codecContext->sample_fmt == AV_SAMPLE_FMT_DBLP) {
-    // Use F32 for float/double codecs
-    sdlFormat = AUDIO_F32SYS;
-    outputSampleFormat = AV_SAMPLE_FMT_FLT;
-    std::cout << "Selected F32 format for float-based codec" << std::endl;
-  } else {
-    // Use F32 for better quality (was S16)
-    sdlFormat = AUDIO_F32SYS;
-    outputSampleFormat = AV_SAMPLE_FMT_FLT;
-    std::cout << "Selected F32 format for integer-based codec" << std::endl;
-  }
-
-  // Initialize SDL with codec's native parameters
   if (!initializeSDL(codecContext->sample_rate,
                      codecContext->ch_layout.nb_channels,
-                     sdlFormat,
-                     1024)) {  // Buffer size from AudioConfig
+                     2048)) {  // Buffer size (smaller for lower latency)
     std::cerr << "Failed to initialize SDL audio" << std::endl;
     avcodec_free_context(&codecContext);
     return false;
@@ -265,11 +126,15 @@ bool AudioModule::loadStream(AVFormatContext* ctx, int audioStreamIndex) {
     return false;
   }
 
-  // Clear buffer and reset clock
-  audioBuffer->clear();
+  // Reset state
   clockTime = 0.0;
   underrunCount = 0;
   overrunCount = 0;
+  audioStarted = false;
+  endOfFile = false;
+
+  // Clear any queued audio
+  SDL_ClearQueuedAudio(audioDevice);
 
   // Start decode thread
   shouldStop = false;
@@ -284,124 +149,197 @@ bool AudioModule::setupResampler() {
   if (!swrContext)
     return false;
 
-  AVChannelLayout input_ch_layout, output_ch_layout;
+  // Get channel count using new API
+  int nb_channels = codecContext->ch_layout.nb_channels;
 
-  if (codecContext->ch_layout.nb_channels > 0) {
-    av_channel_layout_copy(&input_ch_layout, &codecContext->ch_layout);
-  } else {
-    av_channel_layout_default(&input_ch_layout,
-                              codecContext->ch_layout.nb_channels);
+  AVChannelLayout out_ch_layout = AV_CHANNEL_LAYOUT_STEREO;
+  if (nb_channels == 1) {
+    out_ch_layout = AV_CHANNEL_LAYOUT_MONO;
   }
 
-  av_channel_layout_default(&output_ch_layout, audioSpec.channels);
-
-  av_opt_set_chlayout(swrContext, "in_chlayout", &input_ch_layout, 0);
+  av_opt_set_chlayout(swrContext, "in_chlayout", &codecContext->ch_layout, 0);
+  av_opt_set_chlayout(swrContext, "out_chlayout", &out_ch_layout, 0);
   av_opt_set_int(swrContext, "in_sample_rate", codecContext->sample_rate, 0);
-  av_opt_set_sample_fmt(swrContext, "in_sample_fmt", codecContext->sample_fmt,
-                        0);
+  av_opt_set_int(swrContext, "out_sample_rate", codecContext->sample_rate, 0);
+  av_opt_set_sample_fmt(swrContext, "in_sample_fmt", codecContext->sample_fmt, 0);
+  av_opt_set_sample_fmt(swrContext, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
 
-  av_opt_set_chlayout(swrContext, "out_chlayout", &output_ch_layout, 0);
-  av_opt_set_int(swrContext, "out_sample_rate", audioSpec.freq, 0);
-  av_opt_set_sample_fmt(swrContext, "out_sample_fmt", outputSampleFormat, 0);
-
-  int result = swr_init(swrContext);
-
-  av_channel_layout_uninit(&input_ch_layout);
-  av_channel_layout_uninit(&output_ch_layout);
-
-  return result >= 0;
-}
-
-void AudioModule::audioCallback(void *userdata, Uint8 *stream, int len) {
-  AudioModule *module = static_cast<AudioModule *>(userdata);
-
-  SDL_memset(stream, 0, len);
-
-  // Read bytes from buffer
-  size_t bytes_read = module->audioBuffer->read(stream, len);
-
-  if (bytes_read < static_cast<size_t>(len)) {
-    module->underrunCount++;
-    // Log warning every 100 underruns to avoid spam
-    if (module->underrunCount % 100 == 1) {
-      std::cerr << "Audio underrun #" << module->underrunCount.load()
-                << " (buffer: " << (module->audioBuffer->fullness_ratio() * 100) << "%)" << std::endl;
-    }
+  if (swr_init(swrContext) < 0) {
+    std::cerr << "Could not initialize resampler" << std::endl;
+    swr_free(&swrContext);
+    return false;
   }
 
-  // Update master clock based on bytes read
-  if (bytes_read > 0) {
-    // Calculate samples from bytes
-    size_t samples_read = bytes_read / module->bytesPerSample;
-    double samples_per_channel = static_cast<double>(samples_read) / module->audioSpec.channels;
-    double audio_time_advance = samples_per_channel / module->audioSpec.freq;
-    module->clockTime.store(module->clockTime.load() + audio_time_advance);
-    module->lastClockUpdate = std::chrono::steady_clock::now();
-  }
-
-  // Apply volume (F32 format)
-  float vol = module->volume.load();
-  if (module->selectedFormat == AUDIO_F32SYS && bytes_read > 0) {
-    float *output = reinterpret_cast<float *>(stream);
-    size_t num_samples = bytes_read / sizeof(float);
-    for (size_t i = 0; i < num_samples; i++) {
-      output[i] = output[i] * vol;
-      // Clamp to prevent distortion
-      if (output[i] > 1.0f) output[i] = 1.0f;
-      if (output[i] < -1.0f) output[i] = -1.0f;
-    }
-  }
+  return true;
 }
 
 void AudioModule::decodeThreadFunction() {
     if (!swrContext || streamIndex < 0) return;
-    
-    AVPacket* packet = av_packet_alloc();
+
+    AVPacket* pkt = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
-    
-    while (!shouldStop) {
-        // Decode continuously until buffer is 95% full (reduced bursty behavior)
-        if (isPlaying && audioBuffer->fullness_ratio() < 0.95) {
-            if (av_read_frame(formatContext, packet) >= 0) {
-                if (packet->stream_index == streamIndex) {
-                    if (avcodec_send_packet(codecContext, packet) >= 0) {
-                        while (avcodec_receive_frame(codecContext, frame) >= 0) {
-                            int output_samples = swr_get_out_samples(swrContext, frame->nb_samples);
-                            if (output_samples > 0) {
-                                if (audioBuffers.allocate(output_samples, audioSpec.channels, outputSampleFormat)) {
-                                    int resampled = swr_convert(swrContext, audioBuffers.output_data, output_samples,
-                                                              (const uint8_t**)frame->data, frame->nb_samples);
 
-                                    if (resampled > 0) {
-                                        uint8_t* samples = audioBuffers.output_data[0];
-                                        size_t total_bytes = resampled * audioSpec.channels * bytesPerSample;
+    if (!pkt || !frame) {
+        std::cerr << "Could not allocate packet or frame" << std::endl;
+        if (pkt) av_packet_free(&pkt);
+        if (frame) av_frame_free(&frame);
+        return;
+    }
 
-                                        if (!audioBuffer->write(samples, total_bytes)) {
-                                            overrunCount++;
-                                            // Log warning every 100 overruns to avoid spam
-                                            if (overrunCount % 100 == 1) {
-                                                std::cerr << "Audio overrun #" << overrunCount.load()
-                                                          << " (buffer: " << (audioBuffer->fullness_ratio() * 100) << "%)" << std::endl;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                av_packet_unref(packet);
+    int nb_channels = codecContext->ch_layout.nb_channels;
+
+    // Main decoding loop
+    while (!shouldStop && !endOfFile) {
+        // Check current buffer level
+        uint32_t queued_audio_size = SDL_GetQueuedAudioSize(audioDevice);
+
+        // If buffer is getting full, wait a bit
+        if (queued_audio_size > MAX_BUFFER_SIZE) {
+            SDL_Delay(10);
+            continue;
+        }
+
+        // Start audio playback once we have enough data
+        if (!audioStarted && queued_audio_size >= MIN_BUFFER_SIZE && isPlaying) {
+            SDL_PauseAudioDevice(audioDevice, 0);
+            audioStarted = true;
+            std::cout << "Audio playback started" << std::endl;
+        }
+
+        // Only decode if playing
+        if (!isPlaying) {
+            SDL_Delay(10);
+            continue;
+        }
+
+        // Read next packet
+        int ret = av_read_frame(formatContext, pkt);
+        if (ret < 0) {
+            if (ret == AVERROR_EOF) {
+                // Send flush packet to decoder
+                avcodec_send_packet(codecContext, nullptr);
+                endOfFile = true;
             } else {
-                // EOF - could seek back to start for looping
+                std::cerr << "Error reading frame" << std::endl;
                 break;
             }
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        // Skip non-audio packets
+        if (!endOfFile && pkt->stream_index != streamIndex) {
+            av_packet_unref(pkt);
+            continue;
+        }
+
+        // Send packet to decoder
+        if (!endOfFile) {
+            ret = avcodec_send_packet(codecContext, pkt);
+            if (ret < 0 && ret != AVERROR(EAGAIN)) {
+                std::cerr << "Error sending packet to decoder" << std::endl;
+                av_packet_unref(pkt);
+                continue;
+            }
+        }
+
+        // Receive all available frames from decoder
+        while (true) {
+            ret = avcodec_receive_frame(codecContext, frame);
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                break;
+            }
+            if (ret < 0) {
+                std::cerr << "Error receiving frame from decoder" << std::endl;
+                break;
+            }
+
+            // Calculate output buffer size
+            int out_samples = swr_get_out_samples(swrContext, frame->nb_samples);
+            if (out_samples <= 0) {
+                continue;
+            }
+
+            // Allocate output buffer
+            uint8_t* out_buffer[2] = {nullptr};
+            int out_linesize;
+            ret = av_samples_alloc(out_buffer, &out_linesize, nb_channels,
+                                  out_samples, AV_SAMPLE_FMT_S16, 0);
+            if (ret < 0) {
+                std::cerr << "Could not allocate output buffer" << std::endl;
+                continue;
+            }
+
+            // Convert audio format
+            int converted_samples = swr_convert(swrContext, out_buffer, out_samples,
+                                               (const uint8_t**)frame->data, frame->nb_samples);
+
+            if (converted_samples > 0) {
+                int audio_bytes = converted_samples * nb_channels * sizeof(int16_t);
+
+                // Apply volume
+                float vol = volume.load();
+                int16_t* samples = reinterpret_cast<int16_t*>(out_buffer[0]);
+                int num_samples = converted_samples * nb_channels;
+                for (int i = 0; i < num_samples; i++) {
+                    int32_t temp = static_cast<int32_t>(samples[i] * vol);
+                    // Clamp to prevent distortion
+                    if (temp > 32767) temp = 32767;
+                    if (temp < -32768) temp = -32768;
+                    samples[i] = static_cast<int16_t>(temp);
+                }
+
+                // Queue the audio data
+                if (SDL_QueueAudio(audioDevice, out_buffer[0], audio_bytes) < 0) {
+                    std::cerr << "SDL_QueueAudio error: " << SDL_GetError() << std::endl;
+                }
+            }
+
+            // Free the output buffer
+            av_freep(&out_buffer[0]);
+        }
+
+        if (!endOfFile) {
+            av_packet_unref(pkt);
         }
     }
-    
+
+    // Flush the resampler
+    if (!shouldStop) {
+        std::cout << "Flushing resampler..." << std::endl;
+        while (true) {
+            uint8_t* out_buffer[2] = {nullptr};
+            int out_samples = 4096;
+            int out_linesize;
+
+            av_samples_alloc(out_buffer, &out_linesize, nb_channels,
+                            out_samples, AV_SAMPLE_FMT_S16, 0);
+
+            int converted_samples = swr_convert(swrContext, out_buffer, out_samples, nullptr, 0);
+
+            if (converted_samples <= 0) {
+                av_freep(&out_buffer[0]);
+                break;
+            }
+
+            int audio_bytes = converted_samples * nb_channels * sizeof(int16_t);
+
+            // Apply volume
+            float vol = volume.load();
+            int16_t* samples = reinterpret_cast<int16_t*>(out_buffer[0]);
+            int num_samples = converted_samples * nb_channels;
+            for (int i = 0; i < num_samples; i++) {
+                int32_t temp = static_cast<int32_t>(samples[i] * vol);
+                if (temp > 32767) temp = 32767;
+                if (temp < -32768) temp = -32768;
+                samples[i] = static_cast<int16_t>(temp);
+            }
+
+            SDL_QueueAudio(audioDevice, out_buffer[0], audio_bytes);
+            av_freep(&out_buffer[0]);
+        }
+    }
+
     av_frame_free(&frame);
-    av_packet_free(&packet);
+    av_packet_free(&pkt);
 }
 
 
@@ -429,9 +367,8 @@ void AudioModule::pause() {
 void AudioModule::stop() {
   pause();
   clockTime = 0.0;
-  if (audioBuffer) {
-    audioBuffer->clear();
-  }
+  audioStarted = false;
+  SDL_ClearQueuedAudio(audioDevice);
 }
 
 bool AudioModule::seek(double timeSeconds) {
@@ -443,8 +380,10 @@ bool AudioModule::seek(double timeSeconds) {
   bool wasPlaying = isPlaying;
   pause();
 
-  // Clear buffer
-  audioBuffer->clear();
+  // Clear queued audio
+  SDL_ClearQueuedAudio(audioDevice);
+  audioStarted = false;
+  endOfFile = false;
 
   // Seek in format context
   int64_t ts = av_rescale_q(static_cast<int64_t>(timeSeconds * AV_TIME_BASE),
@@ -481,9 +420,17 @@ void AudioModule::setVolume(float vol) {
 float AudioModule::getVolume() const { return volume.load(); }
 
 double AudioModule::getCurrentTime() const {
+  if (!isInitialized() || !audioStarted.load()) {
+    return clockTime.load();
+  }
+
+  // Calculate time based on how much audio has been played
+  // (total time - buffered time)
   double base_time = clockTime.load();
 
   if (isPlaying) {
+    // For queue-based audio, we can estimate based on elapsed time
+    // since SDL manages playback timing internally
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration<double>(now - lastClockUpdate).count();
     return base_time + elapsed;
@@ -507,7 +454,15 @@ bool AudioModule::getIsPlaying() const { return isPlaying.load(); }
 
 AudioStats AudioModule::getStats() const {
   AudioStats stats;
-  stats.bufferFullness = audioBuffer ? audioBuffer->fullness_ratio() : 0.0;
+
+  // Calculate buffer fullness based on queued audio
+  if (isInitialized()) {
+    uint32_t queued = SDL_GetQueuedAudioSize(audioDevice);
+    stats.bufferFullness = static_cast<double>(queued) / MAX_BUFFER_SIZE;
+  } else {
+    stats.bufferFullness = 0.0;
+  }
+
   stats.underruns = underrunCount.load();
   stats.overruns = overrunCount.load();
   stats.currentTime = getCurrentTime();
@@ -518,12 +473,9 @@ AudioStats AudioModule::getStats() const {
 void AudioModule::shutdown() {
   std::cout << "Shutting down AudioModule..." << std::endl;
 
-  // Display final buffer statistics
-  if (audioBuffer) {
-    std::cout << "Audio buffer stats - Underruns: " << underrunCount.load()
-              << ", Overruns: " << overrunCount.load()
-              << ", Final fullness: " << (audioBuffer->fullness_ratio() * 100) << "%" << std::endl;
-  }
+  // Display final statistics
+  std::cout << "Audio stats - Underruns: " << underrunCount.load()
+            << ", Overruns: " << overrunCount.load() << std::endl;
 
   shouldStop = true;
 
@@ -532,6 +484,7 @@ void AudioModule::shutdown() {
   }
 
   if (audioDevice != 0) {
+    SDL_ClearQueuedAudio(audioDevice);
     SDL_CloseAudioDevice(audioDevice);
     audioDevice = 0;
   }
